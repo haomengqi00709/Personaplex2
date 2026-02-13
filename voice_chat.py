@@ -355,50 +355,161 @@ def process_voice(audio, text_prompt=None):
                             print(f"[DEBUG] Forward 签名: {sig}")
                             print(f"[DEBUG] Forward 参数: {list(sig.parameters.keys())}")
                         
-                        # 尝试直接调用 forward（如果可能）
+                        # 尝试直接调用模型进行推理
                         try:
                             # 检查模型是否有音频编码器
                             if hasattr(model, 'audio_encoder'):
                                 print("[DEBUG] 发现 audio_encoder，尝试编码音频...")
-                                encoded = model.audio_encoder(audio_input)
-                                print(f"[DEBUG] 编码后形状: {encoded.shape if hasattr(encoded, 'shape') else type(encoded)}")
+                                try:
+                                    # 使用 audio_encoder 编码音频
+                                    # 注意：audio_encoder 可能需要特定的输入格式
+                                    encoded_result = model.audio_encoder(audio_input)
+                                    
+                                    # 处理编码结果（可能是元组）
+                                    if isinstance(encoded_result, tuple):
+                                        print(f"[DEBUG] 编码结果: 元组，长度={len(encoded_result)}")
+                                        for i, item in enumerate(encoded_result):
+                                            if hasattr(item, 'shape'):
+                                                print(f"[DEBUG] 编码结果[{i}]: shape={item.shape}")
+                                        # 通常第一个是编码后的值，第二个是 codes
+                                        user_audio_codes = encoded_result[0] if len(encoded_result) > 0 else None
+                                        if len(encoded_result) > 1:
+                                            user_audio_codes = encoded_result[1]  # codes 通常在第二个位置
+                                    else:
+                                        print(f"[DEBUG] 编码结果: shape={encoded_result.shape if hasattr(encoded_result, 'shape') else type(encoded_result)}")
+                                        user_audio_codes = encoded_result
+                                    
+                                    print(f"[DEBUG] 使用 user_audio_codes: shape={user_audio_codes.shape if hasattr(user_audio_codes, 'shape') else 'N/A'}")
+                                    
+                                except Exception as encode_error:
+                                    print(f"[DEBUG] audio_encoder 调用失败: {encode_error}")
+                                    import traceback
+                                    traceback.print_exc()
+                                    # 如果 audio_encoder 失败，尝试直接使用原始音频
+                                    user_audio_codes = None
+                                    user_input_values = audio_input
+                                    print("[DEBUG] 回退到使用 user_input_values")
+                            else:
+                                # 没有 audio_encoder，直接使用原始音频值
+                                user_input_values = audio_input
+                                user_audio_codes = None
+                                print("[DEBUG] 没有 audio_encoder，使用 user_input_values")
                             
-                            # 尝试简单的 forward 调用
-                            print("[DEBUG] 尝试调用 forward...")
-                            # 由于不知道确切的输入格式，先尝试最简单的调用
-                            # 注意：这可能会失败，但会给我们更多信息
+                            # 准备文本输入（如果需要）
+                            # 对于 PersonaPlex，可能需要将文本提示转换为 input_ids
+                            input_ids = None
+                            if text_prompt:
+                                print(f"[DEBUG] 处理文本提示: {text_prompt}")
+                                # 尝试使用 tokenizer（如果模型有）
+                                if hasattr(model, 'tokenizer') and model.tokenizer is not None:
+                                    try:
+                                        input_ids = model.tokenizer(text_prompt, return_tensors="pt").input_ids.to(device)
+                                        print(f"[DEBUG] 文本 input_ids: shape={input_ids.shape}")
+                                    except:
+                                        print("[DEBUG] tokenizer 不可用，跳过文本输入")
                             
-                            ai_text = f"""✅ 音频已处理
+                            # 尝试调用 generate 方法
+                            print("[DEBUG] 尝试调用 generate 方法...")
+                            try:
+                                # 构建 generate 的输入
+                                generate_kwargs = {}
+                                
+                                if user_audio_codes is not None:
+                                    generate_kwargs['user_audio_codes'] = user_audio_codes
+                                elif user_input_values is not None:
+                                    generate_kwargs['user_input_values'] = user_input_values
+                                
+                                if input_ids is not None:
+                                    generate_kwargs['input_ids'] = input_ids
+                                
+                                print(f"[DEBUG] Generate 参数: {list(generate_kwargs.keys())}")
+                                
+                                # 调用 generate
+                                outputs = model.generate(
+                                    **generate_kwargs,
+                                    max_new_tokens=128,
+                                    temperature=0.7,
+                                    do_sample=True
+                                )
+                                
+                                print(f"[DEBUG] Generate 成功！输出形状: {outputs.shape if hasattr(outputs, 'shape') else type(outputs)}")
+                                
+                                # 尝试解码输出
+                                output_text = "推理完成"
+                                if hasattr(model, 'tokenizer') and model.tokenizer is not None:
+                                    try:
+                                        output_text = model.tokenizer.decode(outputs[0], skip_special_tokens=True)
+                                        print(f"[DEBUG] 解码文本: {output_text[:100]}")
+                                    except:
+                                        pass
+                                
+                                ai_text = f"""✅ 推理成功！
 
 📊 处理信息:
 - 音频长度: {duration:.2f}秒
 - 采样点数: {len(audio_data)}
-- 采样率: {sr}Hz
 - 文本提示: {text_prompt}
 
-🔧 模型状态:
-- 模型已加载: ✅
-- 音频编码: ✅
+🤖 AI 回复:
+{output_text}
+
+✅ 模型推理完成！"""
+                                
+                            except Exception as gen_error:
+                                print(f"[DEBUG] Generate 失败: {gen_error}")
+                                import traceback
+                                traceback.print_exc()
+                                
+                                # 如果 generate 失败，尝试 forward
+                                print("[DEBUG] 尝试使用 forward 方法...")
+                                try:
+                                    forward_kwargs = {}
+                                    if user_audio_codes is not None:
+                                        forward_kwargs['user_audio_codes'] = user_audio_codes
+                                    elif user_input_values is not None:
+                                        forward_kwargs['user_input_values'] = user_input_values
+                                    
+                                    if input_ids is not None:
+                                        forward_kwargs['input_ids'] = input_ids
+                                    
+                                    forward_output = model.forward(**forward_kwargs)
+                                    print(f"[DEBUG] Forward 成功！输出类型: {type(forward_output)}")
+                                    
+                                    ai_text = f"""✅ 模型调用成功！
+
+📊 处理信息:
+- 音频长度: {duration:.2f}秒
 - 模型类型: {type(model).__name__}
-- Forward 参数: {list(sig.parameters.keys()) if hasattr(model, 'forward') else 'N/A'}
 
-⚠️ 当前限制:
-模型需要特定的输入格式。已尝试检查模型结构。
+🔧 使用 forward 方法调用成功。
+输出类型: {type(forward_output).__name__}
 
-💡 下一步:
-根据模型的实际结构，需要构建正确的输入格式。
-请查看控制台日志获取更多调试信息。"""
+⚠️ 注意: 需要进一步处理输出以获取文本/音频回复。"""
+                                    
+                                except Exception as forward_error:
+                                    print(f"[DEBUG] Forward 也失败: {forward_error}")
+                                    import traceback
+                                    traceback.print_exc()
+                                    ai_text = f"""✅ 音频已处理
+
+📊 处理信息:
+- 音频长度: {duration:.2f}秒
+- 模型类型: {type(model).__name__}
+
+⚠️ 模型调用失败:
+- Generate 错误: {str(gen_error)[:100]}
+- Forward 错误: {str(forward_error)[:100]}
+
+请查看控制台日志获取详细错误信息。"""
                             
                         except Exception as forward_error:
-                            print(f"[DEBUG] Forward 调用失败: {forward_error}")
+                            print(f"[DEBUG] 整体调用失败: {forward_error}")
+                            import traceback
+                            traceback.print_exc()
                             ai_text = f"""✅ 音频已处理
 
 📊 处理信息:
 - 音频长度: {duration:.2f}秒
-- 采样点数: {len(audio_data)}
-- 采样率: {sr}Hz
-
-🔧 模型信息:
 - 模型类型: {type(model).__name__}
 - 错误: {str(forward_error)}
 
