@@ -517,7 +517,7 @@ def process_voice(audio, text_prompt=None):
                                 def get_tensor_info(tensor, name):
                                     """获取 tensor 的完整信息"""
                                     if tensor is None:
-                                        return None, None, None, None
+                                        return None, None, None, None, None
                                     shape = tensor.shape
                                     dtype = tensor.dtype
                                     device = tensor.device
@@ -526,23 +526,27 @@ def process_voice(audio, text_prompt=None):
                                     if len(shape) >= 2:
                                         seq_len = shape[1]
                                         batch_size = shape[0]
+                                        # 如果有第三个维度，那就是 code_dim
+                                        code_dim = shape[2] if len(shape) >= 3 else None
                                     else:
                                         seq_len = shape[0]
                                         batch_size = 1
+                                        code_dim = None
                                     
-                                    print(f"[DEBUG] {name}: shape={shape}, dtype={dtype}, device={device}, batch={batch_size}, seq_len={seq_len}")
-                                    return shape, batch_size, seq_len, dtype
+                                    print(f"[DEBUG] {name}: shape={shape}, dtype={dtype}, device={device}, batch={batch_size}, seq_len={seq_len}, code_dim={code_dim}")
+                                    return shape, batch_size, seq_len, dtype, code_dim
                                 
                                 # 获取所有输入的信息
                                 tensor_infos = {}
                                 for key in ['input_ids', 'user_audio_codes', 'moshi_audio_codes']:
                                     if key in generate_kwargs:
-                                        shape, batch, seq_len, dtype = get_tensor_info(generate_kwargs[key], key)
+                                        shape, batch, seq_len, dtype, code_dim = get_tensor_info(generate_kwargs[key], key)
                                         tensor_infos[key] = {
                                             'shape': shape,
                                             'batch': batch,
                                             'seq_len': seq_len,
                                             'dtype': dtype,
+                                            'code_dim': code_dim,
                                             'tensor': generate_kwargs[key]
                                         }
                                 
@@ -564,7 +568,16 @@ def process_voice(audio, text_prompt=None):
                                                     generate_kwargs[key] = info['tensor'].repeat(target_batch, 1)
                                                 elif len(info['shape']) == 3:
                                                     generate_kwargs[key] = info['tensor'].repeat(target_batch, 1, 1)
-                                            tensor_infos[key] = get_tensor_info(generate_kwargs[key], f"{key} (after batch fix)") + (generate_kwargs[key],)
+                                            # 更新 tensor_infos
+                                            shape, batch, seq_len, dtype, code_dim = get_tensor_info(generate_kwargs[key], f"{key} (after batch fix)")
+                                            tensor_infos[key] = {
+                                                'shape': shape,
+                                                'batch': batch,
+                                                'seq_len': seq_len,
+                                                'dtype': dtype,
+                                                'code_dim': code_dim,
+                                                'tensor': generate_kwargs[key]
+                                            }
                                 
                                 # 2. 对齐序列长度（使用 user_audio_codes 作为目标）
                                 if 'user_audio_codes' in tensor_infos:
@@ -618,19 +631,53 @@ def process_voice(audio, text_prompt=None):
                                                 generate_kwargs['moshi_audio_codes'] = repeated
                                                 print(f"[DEBUG] 对齐后 moshi_audio_codes: shape={generate_kwargs['moshi_audio_codes'].shape}")
                                     
-                                    # 3. 检查数据类型是否一致（都应该是 float16 或 long）
+                                    # 3. 对齐 code_dim（如果 user_audio_codes 和 moshi_audio_codes 都有 code_dim）
+                                    if 'user_audio_codes' in tensor_infos and 'moshi_audio_codes' in tensor_infos:
+                                        user_code_dim = tensor_infos['user_audio_codes']['code_dim']
+                                        moshi_code_dim = tensor_infos['moshi_audio_codes']['code_dim']
+                                        
+                                        if user_code_dim is not None and moshi_code_dim is not None:
+                                            if user_code_dim != moshi_code_dim:
+                                                print(f"[DEBUG] ⚠️ Code dimension 不匹配: user={user_code_dim}, moshi={moshi_code_dim}")
+                                                print(f"[DEBUG] 尝试调整 moshi_audio_codes 的 code_dim...")
+                                                moshi = generate_kwargs['moshi_audio_codes']
+                                                if len(moshi.shape) == 3:
+                                                    # 如果 moshi 的 code_dim 较小，需要扩展
+                                                    if moshi_code_dim < user_code_dim:
+                                                        # 用零填充
+                                                        pad_size = user_code_dim - moshi_code_dim
+                                                        pad = torch.zeros((moshi.shape[0], moshi.shape[1], pad_size), 
+                                                                          dtype=moshi.dtype, device=moshi.device)
+                                                        generate_kwargs['moshi_audio_codes'] = torch.cat([moshi, pad], dim=2)
+                                                        print(f"[DEBUG] 扩展 moshi_audio_codes code_dim: {moshi_code_dim} -> {user_code_dim}")
+                                                    elif moshi_code_dim > user_code_dim:
+                                                        # 截断
+                                                        generate_kwargs['moshi_audio_codes'] = moshi[:, :, :user_code_dim]
+                                                        print(f"[DEBUG] 截断 moshi_audio_codes code_dim: {moshi_code_dim} -> {user_code_dim}")
+                                                # 更新 tensor_infos
+                                                shape, batch, seq_len, dtype, code_dim = get_tensor_info(generate_kwargs['moshi_audio_codes'], "moshi_audio_codes (after code_dim fix)")
+                                                tensor_infos['moshi_audio_codes'] = {
+                                                    'shape': shape,
+                                                    'batch': batch,
+                                                    'seq_len': seq_len,
+                                                    'dtype': dtype,
+                                                    'code_dim': code_dim,
+                                                    'tensor': generate_kwargs['moshi_audio_codes']
+                                                }
+                                    
+                                    # 4. 检查数据类型是否一致（都应该是 float16 或 long）
                                     dtypes = {k: v['dtype'] for k, v in tensor_infos.items()}
                                     print(f"[DEBUG] 数据类型: {dtypes}")
                                     
-                                    # 4. 最终验证所有维度
+                                    # 5. 最终验证所有维度
                                     print("[DEBUG] ========== 最终验证 ==========")
                                     final_infos = {}
                                     all_match = True
                                     
                                     for key in ['input_ids', 'user_audio_codes', 'moshi_audio_codes']:
                                         if key in generate_kwargs:
-                                            shape, batch, seq_len, dtype = get_tensor_info(generate_kwargs[key], f"{key} (final)")
-                                            final_infos[key] = {'shape': shape, 'batch': batch, 'seq_len': seq_len, 'dtype': dtype}
+                                            shape, batch, seq_len, dtype, code_dim = get_tensor_info(generate_kwargs[key], f"{key} (final)")
+                                            final_infos[key] = {'shape': shape, 'batch': batch, 'seq_len': seq_len, 'dtype': dtype, 'code_dim': code_dim}
                                     
                                     # 检查序列长度
                                     final_seq_lens = [v['seq_len'] for v in final_infos.values() if v['seq_len'] is not None]
@@ -644,12 +691,24 @@ def process_voice(audio, text_prompt=None):
                                         print(f"[DEBUG] ❌ Batch size 仍不匹配: {final_batches}")
                                         all_match = False
                                     
+                                    # 检查 code_dim（仅对 audio_codes）
+                                    audio_code_dims = {}
+                                    for key in ['user_audio_codes', 'moshi_audio_codes']:
+                                        if key in final_infos and final_infos[key]['code_dim'] is not None:
+                                            audio_code_dims[key] = final_infos[key]['code_dim']
+                                    if len(audio_code_dims) == 2:
+                                        if len(set(audio_code_dims.values())) > 1:
+                                            print(f"[DEBUG] ❌ Code dimension 仍不匹配: {audio_code_dims}")
+                                            all_match = False
+                                        else:
+                                            print(f"[DEBUG] ✅ Code dimension 匹配: {list(audio_code_dims.values())[0]}")
+                                    
                                     if not all_match:
                                         print(f"[DEBUG] ❌ 对齐失败!")
                                         ai_text = f"""❌ 输入对齐失败
 
 📊 最终状态:
-{chr(10).join([f"- {k}: shape={v['shape']}, batch={v['batch']}, seq_len={v['seq_len']}" for k, v in final_infos.items()])}
+{chr(10).join([f"- {k}: shape={v['shape']}, batch={v['batch']}, seq_len={v['seq_len']}, code_dim={v.get('code_dim', 'N/A')}" for k, v in final_infos.items()])}
 
 ⚠️ 无法对齐所有输入维度。
 请查看控制台日志。"""
