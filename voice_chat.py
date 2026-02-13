@@ -481,30 +481,133 @@ def process_voice(audio, text_prompt=None):
                                 # 用户音频输入
                                 if user_audio_codes is not None:
                                     generate_kwargs['user_audio_codes'] = user_audio_codes
+                                    print(f"[DEBUG] user_audio_codes: shape={user_audio_codes.shape}")
                                 elif user_input_values is not None:
                                     generate_kwargs['user_input_values'] = user_input_values
+                                    print(f"[DEBUG] user_input_values: shape={user_input_values.shape}")
                                 
                                 # Moshi 输入（必需的）
                                 if 'moshi_input_values' in moshi_inputs:
                                     generate_kwargs['moshi_input_values'] = moshi_inputs['moshi_input_values']
+                                    print(f"[DEBUG] moshi_input_values: shape={moshi_inputs['moshi_input_values'].shape}")
                                 elif 'moshi_audio_codes' in moshi_inputs:
                                     generate_kwargs['moshi_audio_codes'] = moshi_inputs['moshi_audio_codes']
+                                    print(f"[DEBUG] moshi_audio_codes: shape={moshi_inputs['moshi_audio_codes'].shape}")
                                 
                                 # 文本输入（必需的）- 从 get_unconditional_inputs 获取
                                 if 'input_ids' in moshi_inputs:
                                     generate_kwargs['input_ids'] = moshi_inputs['input_ids']
-                                    print(f"[DEBUG] 使用 get_unconditional_inputs 的 input_ids: shape={moshi_inputs['input_ids'].shape}")
+                                    print(f"[DEBUG] input_ids: shape={moshi_inputs['input_ids'].shape}")
                                 elif input_ids is not None:
                                     generate_kwargs['input_ids'] = input_ids
+                                    print(f"[DEBUG] input_ids (from tokenizer): shape={input_ids.shape}")
                                 else:
                                     # 如果没有 input_ids，尝试从 get_unconditional_inputs 获取
                                     try:
                                         unconditional = model.get_unconditional_inputs(num_samples=1)
                                         if 'input_ids' in unconditional:
                                             generate_kwargs['input_ids'] = unconditional['input_ids']
-                                            print(f"[DEBUG] 从 get_unconditional_inputs 获取 input_ids: shape={unconditional['input_ids'].shape}")
+                                            print(f"[DEBUG] input_ids (from get_unconditional_inputs): shape={unconditional['input_ids'].shape}")
                                     except:
                                         pass
+                                
+                                # 检查序列长度是否匹配
+                                print("[DEBUG] 检查序列长度匹配...")
+                                seq_lengths = {}
+                                if 'input_ids' in generate_kwargs:
+                                    seq_lengths['input_ids'] = generate_kwargs['input_ids'].shape[1] if len(generate_kwargs['input_ids'].shape) > 1 else generate_kwargs['input_ids'].shape[0]
+                                if 'user_audio_codes' in generate_kwargs:
+                                    # audio_codes 通常是 (batch, num_codes, code_dim) 或 (batch, seq_len, ...)
+                                    codes_shape = generate_kwargs['user_audio_codes'].shape
+                                    if len(codes_shape) >= 2:
+                                        seq_lengths['user_audio_codes'] = codes_shape[1]  # 第二个维度通常是序列长度
+                                    else:
+                                        seq_lengths['user_audio_codes'] = codes_shape[0]
+                                if 'moshi_audio_codes' in generate_kwargs:
+                                    codes_shape = generate_kwargs['moshi_audio_codes'].shape
+                                    if len(codes_shape) >= 2:
+                                        seq_lengths['moshi_audio_codes'] = codes_shape[1]
+                                    else:
+                                        seq_lengths['moshi_audio_codes'] = codes_shape[0]
+                                
+                                print(f"[DEBUG] 序列长度: {seq_lengths}")
+                                
+                                # 如果长度不匹配，尝试调整
+                                if len(seq_lengths) > 1:
+                                    lengths = list(seq_lengths.values())
+                                    if len(set(lengths)) > 1:
+                                        print(f"[DEBUG] ⚠️ 序列长度不匹配: {seq_lengths}")
+                                        print("[DEBUG] 尝试调整以匹配...")
+                                        
+                                        # 找到最长的序列长度
+                                        max_length = max(lengths)
+                                        print(f"[DEBUG] 目标长度: {max_length}")
+                                        
+                                        # 调整 input_ids
+                                        if 'input_ids' in generate_kwargs and seq_lengths.get('input_ids', 0) < max_length:
+                                            current_ids = generate_kwargs['input_ids']
+                                            # 填充到 max_length（使用 pad_token_id 或 0）
+                                            pad_length = max_length - current_ids.shape[1] if len(current_ids.shape) > 1 else max_length - current_ids.shape[0]
+                                            if pad_length > 0:
+                                                pad_token_id = getattr(model.config, 'pad_token_id', 0)
+                                                if len(current_ids.shape) == 2:
+                                                    padding = torch.full((current_ids.shape[0], pad_length), pad_token_id, dtype=current_ids.dtype, device=device)
+                                                    generate_kwargs['input_ids'] = torch.cat([current_ids, padding], dim=1)
+                                                else:
+                                                    padding = torch.full((pad_length,), pad_token_id, dtype=current_ids.dtype, device=device)
+                                                    generate_kwargs['input_ids'] = torch.cat([current_ids, padding], dim=0)
+                                                print(f"[DEBUG] 调整后 input_ids: shape={generate_kwargs['input_ids'].shape}")
+                                        
+                                        # 调整 moshi_audio_codes 以匹配 user_audio_codes
+                                        if 'user_audio_codes' in generate_kwargs and 'moshi_audio_codes' in generate_kwargs:
+                                            user_codes = generate_kwargs['user_audio_codes']
+                                            moshi_codes = generate_kwargs['moshi_audio_codes']
+                                            
+                                            # 获取 user_audio_codes 的序列长度
+                                            if len(user_codes.shape) >= 2:
+                                                user_seq_len = user_codes.shape[1]
+                                            else:
+                                                user_seq_len = user_codes.shape[0]
+                                            
+                                            # 获取 moshi_audio_codes 的序列长度
+                                            if len(moshi_codes.shape) >= 2:
+                                                moshi_seq_len = moshi_codes.shape[1]
+                                            else:
+                                                moshi_seq_len = moshi_codes.shape[0]
+                                            
+                                            print(f"[DEBUG] user_audio_codes seq_len: {user_seq_len}, moshi_audio_codes seq_len: {moshi_seq_len}")
+                                            
+                                            # 如果 moshi 较短，需要重复或填充
+                                            if moshi_seq_len < user_seq_len:
+                                                # 重复 moshi_codes 以匹配长度
+                                                repeat_times = user_seq_len // moshi_seq_len
+                                                remainder = user_seq_len % moshi_seq_len
+                                                
+                                                if len(moshi_codes.shape) >= 2:
+                                                    repeated = moshi_codes.repeat(1, repeat_times, 1) if len(moshi_codes.shape) == 3 else moshi_codes.repeat(1, repeat_times)
+                                                    if remainder > 0:
+                                                        repeated = torch.cat([repeated, moshi_codes[:, :remainder]], dim=1)
+                                                    generate_kwargs['moshi_audio_codes'] = repeated
+                                                else:
+                                                    repeated = moshi_codes.repeat(repeat_times)
+                                                    if remainder > 0:
+                                                        repeated = torch.cat([repeated, moshi_codes[:remainder]], dim=0)
+                                                    generate_kwargs['moshi_audio_codes'] = repeated
+                                                
+                                                print(f"[DEBUG] 调整后 moshi_audio_codes: shape={generate_kwargs['moshi_audio_codes'].shape}")
+                                        
+                                        # 重新检查长度
+                                        new_lengths = {}
+                                        if 'input_ids' in generate_kwargs:
+                                            new_lengths['input_ids'] = generate_kwargs['input_ids'].shape[1] if len(generate_kwargs['input_ids'].shape) > 1 else generate_kwargs['input_ids'].shape[0]
+                                        if 'user_audio_codes' in generate_kwargs:
+                                            codes_shape = generate_kwargs['user_audio_codes'].shape
+                                            new_lengths['user_audio_codes'] = codes_shape[1] if len(codes_shape) >= 2 else codes_shape[0]
+                                        if 'moshi_audio_codes' in generate_kwargs:
+                                            codes_shape = generate_kwargs['moshi_audio_codes'].shape
+                                            new_lengths['moshi_audio_codes'] = codes_shape[1] if len(codes_shape) >= 2 else codes_shape[0]
+                                        
+                                        print(f"[DEBUG] 调整后序列长度: {new_lengths}")
                                 
                                 print(f"[DEBUG] Generate 参数: {list(generate_kwargs.keys())}")
                                 
