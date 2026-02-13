@@ -29,5 +29,9 @@ echo ""
 echo "按 Ctrl+C 停止服务器"
 echo ""
 
-python3 app.py
+# 使用简单版本（推荐）
+python3 simple_chat.py
+
+# 或使用完整版本
+# python3 app.py
 
