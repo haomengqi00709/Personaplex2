@@ -129,7 +129,7 @@ with gr.Blocks(title="PersonaPlex 语音对话", theme=gr.themes.Soft()) as demo
             gr.Markdown("### 🤖 AI 回复")
             ai_text = gr.Textbox(label="", lines=10, interactive=False, placeholder="AI的回复会显示在这里...")
     
-    # 语音输入
+        # 语音输入
     audio_input = gr.Audio(
         label="",
         type="filepath",
@@ -138,23 +138,26 @@ with gr.Blocks(title="PersonaPlex 语音对话", theme=gr.themes.Soft()) as demo
         show_label=False
     )
     
-    # 处理按钮
-    process_btn = gr.Button("🚀 处理语音", variant="primary", size="lg")
-    
     gr.Markdown("""
     ---
     ### 📝 使用说明
     
     1. 点击"加载模型"（首次需要几分钟）
-    2. 点击麦克风图标录制语音
-    3. 点击"处理语音"按钮
+    2. 点击下方麦克风图标开始录音
+    3. 停止录音后自动处理
     4. 查看左侧（您说的话）和右侧（AI回复）
     """)
     
+    # 当音频输入改变时自动处理
+    def auto_process(audio):
+        if audio is not None:
+            return process_voice(audio)
+        return "", ""
+    
     # 事件绑定
     load_btn.click(fn=load_model, outputs=status)
-    process_btn.click(
-        fn=process_voice,
+    audio_input.change(
+        fn=auto_process,
         inputs=[audio_input],
         outputs=[user_text, ai_text]
     )
