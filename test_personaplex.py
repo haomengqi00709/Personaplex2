@@ -10,7 +10,12 @@ import yaml
 import soundfile as sf
 import numpy as np
 from pathlib import Path
-from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq, MoshiForConditionalGeneration, MoshiProcessor
+from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq, MoshiForConditionalGeneration
+# 尝试导入 MoshiProcessor（可能在某些版本中不可用）
+try:
+    from transformers import MoshiProcessor
+except ImportError:
+    MoshiProcessor = None
 from huggingface_hub import login
 import warnings
 warnings.filterwarnings("ignore")
@@ -68,17 +73,24 @@ class PersonaPlexTester:
             print(f"模型 ID: {model_id}")
             print(f"使用数据类型: {model_config['torch_dtype']}")
             
-            # 加载处理器（PersonaPlex 基于 Moshi，优先使用 MoshiProcessor）
+            # 加载处理器
             print("加载处理器...")
-            try:
-                # 首先尝试 MoshiProcessor
-                self.processor = MoshiProcessor.from_pretrained(
-                    model_id,
-                    trust_remote_code=True
-                )
-                print("✅ 使用 MoshiProcessor 加载成功")
-            except Exception as e1:
-                print(f"⚠️  MoshiProcessor 失败: {e1}")
+            self.processor = None
+            
+            # 首先尝试 MoshiProcessor（如果可用）
+            if MoshiProcessor is not None:
+                try:
+                    self.processor = MoshiProcessor.from_pretrained(
+                        model_id,
+                        trust_remote_code=True
+                    )
+                    print("✅ 使用 MoshiProcessor 加载成功")
+                except Exception as e1:
+                    print(f"⚠️  MoshiProcessor 失败: {e1}")
+                    self.processor = None
+            
+            # 如果 MoshiProcessor 不可用或失败，尝试 AutoProcessor
+            if self.processor is None:
                 print("   尝试使用 AutoProcessor...")
                 try:
                     self.processor = AutoProcessor.from_pretrained(
@@ -87,7 +99,8 @@ class PersonaPlexTester:
                     )
                     print("✅ 使用 AutoProcessor 加载成功")
                 except Exception as e2:
-                    print(f"❌ AutoProcessor 也失败: {e2}")
+                    print(f"⚠️  AutoProcessor 失败: {e2}")
+                    print("   警告: 无法加载 processor，某些功能可能不可用")
                     self.processor = None
             
             # 加载模型（使用 float16 降低显存）

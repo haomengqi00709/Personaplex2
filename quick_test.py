@@ -8,7 +8,12 @@ import os
 import torch
 import numpy as np
 import soundfile as sf
-from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq, MoshiForConditionalGeneration, MoshiProcessor
+from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq, MoshiForConditionalGeneration
+# 尝试导入 MoshiProcessor（可能在某些版本中不可用）
+try:
+    from transformers import MoshiProcessor
+except ImportError:
+    MoshiProcessor = None
 from huggingface_hub import login
 
 # 配置
@@ -86,17 +91,24 @@ def load_model(device):
     print("使用 float16 以降低显存占用...")
     
     try:
-        # 尝试加载处理器（PersonaPlex 基于 Moshi，使用 MoshiProcessor）
+        # 尝试加载处理器
         print("\n1. 加载处理器...")
-        try:
-            # 首先尝试 MoshiProcessor（PersonaPlex 基于 Moshi 架构）
-            processor = MoshiProcessor.from_pretrained(
-                MODEL_ID,
-                trust_remote_code=True
-            )
-            print("✅ 使用 MoshiProcessor 加载成功")
-        except Exception as e1:
-            print(f"⚠️  MoshiProcessor 失败: {e1}")
+        processor = None
+        
+        # 首先尝试 MoshiProcessor（如果可用）
+        if MoshiProcessor is not None:
+            try:
+                processor = MoshiProcessor.from_pretrained(
+                    MODEL_ID,
+                    trust_remote_code=True
+                )
+                print("✅ 使用 MoshiProcessor 加载成功")
+            except Exception as e1:
+                print(f"⚠️  MoshiProcessor 失败: {e1}")
+                processor = None
+        
+        # 如果 MoshiProcessor 不可用或失败，尝试 AutoProcessor
+        if processor is None:
             print("   尝试使用 AutoProcessor...")
             try:
                 processor = AutoProcessor.from_pretrained(
@@ -105,8 +117,10 @@ def load_model(device):
                 )
                 print("✅ 使用 AutoProcessor 加载成功")
             except Exception as e2:
-                print(f"❌ AutoProcessor 也失败: {e2}")
-                raise
+                print(f"⚠️  AutoProcessor 失败: {e2}")
+                print("   尝试不使用 processor，直接加载模型...")
+                # 某些情况下可能不需要 processor
+                processor = None
         
         # 尝试加载模型
         print("\n2. 加载模型...")
