@@ -238,8 +238,8 @@ PersonaPlex 使用自定义架构，需要从模型仓库加载自定义代码�
 
 请查看控制台日志获取详细调试信息。"""
 
-def process_voice(audio):
-    """处理语音"""
+def process_voice(audio, text_prompt=None):
+    """处理语音并生成回复"""
     global model
     
     if model is None:
@@ -248,9 +248,25 @@ def process_voice(audio):
     if audio is None:
         return "", ""
     
+    # 处理音频路径（Gradio 可能传递字典）
+    if isinstance(audio, dict):
+        audio_path = audio.get('path', audio.get('url', None))
+        if audio_path is None:
+            return "", ""
+    else:
+        audio_path = audio
+    
+    # 设置默认文本提示
+    if text_prompt is None or text_prompt.strip() == "":
+        text_prompt = "You are a helpful AI assistant. Respond naturally."
+    
     try:
+        print("\n[DEBUG] 开始处理语音...")
+        print(f"[DEBUG] 音频路径: {audio_path}")
+        print(f"[DEBUG] 文本提示: {text_prompt}")
+        
         # 读取音频
-        audio_data, sr = sf.read(audio)
+        audio_data, sr = sf.read(audio_path)
         if len(audio_data.shape) > 1:
             audio_data = np.mean(audio_data, axis=1)
         
