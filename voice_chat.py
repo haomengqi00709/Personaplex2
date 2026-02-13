@@ -57,39 +57,71 @@ def load_model():
         print(f"\n[DEBUG] Transformers 版本: {transformers_version}")
         print(f"[DEBUG] Transformers 路径: {transformers.__file__}")
         
-        # 尝试加载配置
-        print("\n[DEBUG] 步骤1: 加载模型配置...")
+        # 尝试加载配置（直接下载文件，不通过 AutoConfig）
+        print("\n[DEBUG] 步骤1: 检查模型配置和自定义代码...")
         try:
-            config = AutoConfig.from_pretrained(
-                MODEL_ID,
-                trust_remote_code=True
+            from huggingface_hub import hf_hub_download
+            import json
+            
+            # 直接下载 config.json
+            print("[DEBUG] 直接下载 config.json...")
+            config_path = hf_hub_download(
+                repo_id=MODEL_ID,
+                filename="config.json",
+                token=HF_TOKEN
             )
-            print(f"[DEBUG] ✅ 配置加载成功")
-            print(f"[DEBUG] - Model type: {getattr(config, 'model_type', 'N/A')}")
-            print(f"[DEBUG] - Architectures: {getattr(config, 'architectures', 'N/A')}")
-            print(f"[DEBUG] - Auto map: {getattr(config, 'auto_map', 'N/A')}")
+            
+            with open(config_path, 'r') as f:
+                config_data = json.load(f)
+            
+            print(f"[DEBUG] ✅ 配置文件下载成功")
+            print(f"[DEBUG] - Model type: {config_data.get('model_type', 'N/A')}")
+            print(f"[DEBUG] - Architectures: {config_data.get('architectures', 'N/A')}")
+            print(f"[DEBUG] - Auto map: {config_data.get('auto_map', 'N/A')}")
             
             # 检查是否有自定义代码
-            if hasattr(config, 'auto_map'):
-                print(f"[DEBUG] - 发现自定义代码映射: {config.auto_map}")
+            auto_map = config_data.get('auto_map', {})
+            if auto_map:
+                print(f"[DEBUG] ✅ 发现自定义代码映射: {auto_map}")
+                
+                # 检查是否有 modeling 文件
+                if 'AutoModel' in auto_map or 'AutoModelForConditionalGeneration' in auto_map:
+                    model_file = auto_map.get('AutoModel') or auto_map.get('AutoModelForConditionalGeneration')
+                    print(f"[DEBUG] 自定义模型文件: {model_file}")
+                    
+                    # 尝试下载自定义代码文件
+                    try:
+                        custom_code_path = hf_hub_download(
+                            repo_id=MODEL_ID,
+                            filename=model_file,
+                            token=HF_TOKEN
+                        )
+                        print(f"[DEBUG] ✅ 自定义代码文件下载成功: {custom_code_path}")
+                    except Exception as e:
+                        print(f"[DEBUG] ⚠️  自定义代码文件下载失败: {e}")
+            else:
+                print("[DEBUG] ⚠️  未找到 auto_map，可能需要手动处理")
+                
         except Exception as e:
-            print(f"[DEBUG] ❌ 配置加载失败: {e}")
+            print(f"[DEBUG] ⚠️  配置检查失败（继续尝试加载）: {e}")
             import traceback
             traceback.print_exc()
-            raise
         
         # 尝试多种加载方式
         print("\n[DEBUG] 步骤2: 尝试加载模型...")
         
-        # 方法1: 使用 AutoModel + trust_remote_code
+        # 方法1: 使用 AutoModel + trust_remote_code（绕过配置检查）
         print("[DEBUG] 方法1: 使用 AutoModel.from_pretrained + trust_remote_code=True")
+        print("[DEBUG] 注意: 即使配置加载失败，也尝试直接加载模型（trust_remote_code 应该会处理自定义代码）")
         try:
+            # 直接尝试加载，让 trust_remote_code 处理自定义代码
             model = AutoModel.from_pretrained(
                 MODEL_ID,
                 torch_dtype=torch.float16,
                 device_map="auto",
                 low_cpu_mem_usage=True,
-                trust_remote_code=True
+                trust_remote_code=True,  # 关键：这会自动下载并执行自定义代码
+                local_files_only=False  # 确保从远程下载自定义代码
             )
             print("[DEBUG] ✅ 方法1成功: AutoModel 加载成功")
         except Exception as e1:
@@ -97,8 +129,42 @@ def load_model():
             import traceback
             traceback.print_exc()
             
-            # 方法2: 尝试使用 MoshiForConditionalGeneration
-            print("\n[DEBUG] 方法2: 尝试使用 MoshiForConditionalGeneration...")
+            # 方法2: 尝试手动加载自定义代码
+            print("\n[DEBUG] 方法2: 尝试手动加载自定义代码...")
+            try:
+                # 检查是否有自定义代码文件
+                from huggingface_hub import list_repo_files
+                
+                print("[DEBUG] 列出模型仓库文件...")
+                repo_files = list_repo_files(
+                    repo_id=MODEL_ID,
+                    token=HF_TOKEN
+                )
+                print(f"[DEBUG] 仓库文件: {[f for f in repo_files if '.py' in f]}")
+                
+                # 查找 modeling 文件
+                modeling_files = [f for f in repo_files if 'modeling' in f.lower() and f.endswith('.py')]
+                if modeling_files:
+                    print(f"[DEBUG] 找到建模文件: {modeling_files}")
+                    # 尝试手动下载并导入
+                    for model_file in modeling_files:
+                        try:
+                            print(f"[DEBUG] 尝试下载并导入: {model_file}")
+                            custom_path = hf_hub_download(
+                                repo_id=MODEL_ID,
+                                filename=model_file,
+                                token=HF_TOKEN
+                            )
+                            print(f"[DEBUG] 自定义代码路径: {custom_path}")
+                            # 这里可以尝试动态导入，但比较复杂
+                        except Exception as e:
+                            print(f"[DEBUG] 下载 {model_file} 失败: {e}")
+                
+            except Exception as e2:
+                print(f"[DEBUG] ⚠️  方法2失败: {e2}")
+            
+            # 方法3: 尝试使用 MoshiForConditionalGeneration（作为回退）
+            print("\n[DEBUG] 方法3: 尝试使用 MoshiForConditionalGeneration...")
             try:
                 from transformers import MoshiForConditionalGeneration
                 model = MoshiForConditionalGeneration.from_pretrained(
@@ -108,64 +174,36 @@ def load_model():
                     low_cpu_mem_usage=True,
                     trust_remote_code=True
                 )
-                print("[DEBUG] ✅ 方法2成功: MoshiForConditionalGeneration 加载成功")
-            except Exception as e2:
-                print(f"[DEBUG] ❌ 方法2失败: {type(e2).__name__}: {e2}")
+                print("[DEBUG] ✅ 方法3成功: MoshiForConditionalGeneration 加载成功")
+            except Exception as e3:
+                print(f"[DEBUG] ❌ 方法3失败: {type(e3).__name__}: {e3}")
                 import traceback
                 traceback.print_exc()
                 
-                # 方法3: 检查是否有自定义模型类
-                print("\n[DEBUG] 方法3: 检查自定义模型类...")
+                # 最终错误处理
                 error_msg = str(e1)
-                
-                if "does not recognize this architecture" in error_msg or "personaplex" in error_msg.lower():
-                    # 尝试查看模型仓库中的自定义代码
-                    print("[DEBUG] 尝试查找自定义代码...")
-                    try:
-                        from huggingface_hub import hf_hub_download
-                        import json
-                        
-                        # 下载 config.json 查看 auto_map
-                        config_path = hf_hub_download(
-                            repo_id=MODEL_ID,
-                            filename="config.json",
-                            token=HF_TOKEN
-                        )
-                        with open(config_path, 'r') as f:
-                            config_data = json.load(f)
-                        
-                        print(f"[DEBUG] Config 内容: {json.dumps(config_data, indent=2)[:500]}...")
-                        
-                        if 'auto_map' in config_data:
-                            print(f"[DEBUG] 发现 auto_map: {config_data['auto_map']}")
-                            # 尝试手动加载自定义代码
-                            print("[DEBUG] 尝试手动加载自定义代码...")
-                            # 这里可能需要根据 auto_map 的内容来加载
-                        
-                    except Exception as e3:
-                        print(f"[DEBUG] ❌ 查找自定义代码失败: {e3}")
-                    
-                    return f"""❌ 模型架构识别失败
+                return f"""❌ 模型加载失败
 
 当前 Transformers 版本: {transformers_version}
-错误: {error_msg}
+主要错误: {error_msg}
 
-调试信息:
-- 已尝试 AutoModel.from_pretrained
-- 已尝试 MoshiForConditionalGeneration
-- 已检查模型配置
+已尝试的方法:
+1. AutoModel.from_pretrained + trust_remote_code=True
+2. 手动检查自定义代码文件
+3. MoshiForConditionalGeneration
 
-可能的原因:
-1. PersonaPlex 架构需要特定的 Transformers 版本
-2. 需要从模型仓库加载自定义代码
-3. 模型配置中的 auto_map 指向的代码不可用
+问题分析:
+PersonaPlex 使用自定义架构，需要从模型仓库加载自定义代码。
+但 Transformers 在加载配置时就失败了，无法继续。
 
+解决方案:
+由于 PersonaPlex 架构太新，当前 Transformers 版本可能还不完全支持。
 建议:
-1. 检查模型仓库是否有自定义代码文件
-2. 查看 Hugging Face 模型页面了解加载要求
-3. 或使用官方 PersonaPlex 代码库"""
-                else:
-                    raise e1
+1. 等待 Transformers 更新支持 PersonaPlex
+2. 或使用官方 PersonaPlex 代码库: https://github.com/NVIDIA/personaplex
+3. 或手动实现模型加载逻辑"""
+                
+                raise e1
         
         # 验证模型
         print("\n[DEBUG] 步骤3: 验证模型...")
