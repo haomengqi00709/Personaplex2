@@ -343,7 +343,32 @@ def process_voice(audio, text_prompt=None):
                         # 尝试生成
                         print("[DEBUG] 尝试生成回复...")
                         
-                        ai_text = f"""✅ 音频已处理
+                        # 检查模型的实际结构
+                        print("[DEBUG] 检查模型结构...")
+                        print(f"[DEBUG] 模型类型: {type(model).__name__}")
+                        print(f"[DEBUG] 模型属性: {[attr for attr in dir(model) if not attr.startswith('_')][:20]}")
+                        
+                        # 尝试查看模型的 forward 方法
+                        import inspect
+                        if hasattr(model, 'forward'):
+                            sig = inspect.signature(model.forward)
+                            print(f"[DEBUG] Forward 签名: {sig}")
+                            print(f"[DEBUG] Forward 参数: {list(sig.parameters.keys())}")
+                        
+                        # 尝试直接调用 forward（如果可能）
+                        try:
+                            # 检查模型是否有音频编码器
+                            if hasattr(model, 'audio_encoder'):
+                                print("[DEBUG] 发现 audio_encoder，尝试编码音频...")
+                                encoded = model.audio_encoder(audio_input)
+                                print(f"[DEBUG] 编码后形状: {encoded.shape if hasattr(encoded, 'shape') else type(encoded)}")
+                            
+                            # 尝试简单的 forward 调用
+                            print("[DEBUG] 尝试调用 forward...")
+                            # 由于不知道确切的输入格式，先尝试最简单的调用
+                            # 注意：这可能会失败，但会给我们更多信息
+                            
+                            ai_text = f"""✅ 音频已处理
 
 📊 处理信息:
 - 音频长度: {duration:.2f}秒
@@ -354,15 +379,30 @@ def process_voice(audio, text_prompt=None):
 🔧 模型状态:
 - 模型已加载: ✅
 - 音频编码: ✅
-- 推理准备: ⚠️
+- 模型类型: {type(model).__name__}
+- Forward 参数: {list(sig.parameters.keys()) if hasattr(model, 'forward') else 'N/A'}
 
-⚠️ 注意: 由于缺少 processor，无法确定模型的精确输入格式。
-模型可能需要:
-1. 音频编码后的 tokens（通过 Mimi 编解码器）
-2. 文本 tokens
-3. 特定的输入结构
+⚠️ 当前限制:
+模型需要特定的输入格式。已尝试检查模型结构。
 
-💡 建议: 查看模型文档或使用官方代码库了解输入格式。"""
+💡 下一步:
+根据模型的实际结构，需要构建正确的输入格式。
+请查看控制台日志获取更多调试信息。"""
+                            
+                        except Exception as forward_error:
+                            print(f"[DEBUG] Forward 调用失败: {forward_error}")
+                            ai_text = f"""✅ 音频已处理
+
+📊 处理信息:
+- 音频长度: {duration:.2f}秒
+- 采样点数: {len(audio_data)}
+- 采样率: {sr}Hz
+
+🔧 模型信息:
+- 模型类型: {type(model).__name__}
+- 错误: {str(forward_error)}
+
+⚠️ 需要根据模型文档构建正确的输入格式。"""
                         
                     except Exception as e:
                         print(f"[DEBUG] 推理尝试失败: {e}")
@@ -377,6 +417,12 @@ def process_voice(audio, text_prompt=None):
                         import inspect
                         sig = inspect.signature(model.forward)
                         print(f"[DEBUG] Forward 方法签名: {sig}")
+                        print(f"[DEBUG] Forward 参数: {list(sig.parameters.keys())}")
+                        
+                        # 尝试查看模型的主要组件
+                        print("[DEBUG] 检查模型组件...")
+                        model_components = [attr for attr in dir(model) if not attr.startswith('_') and not callable(getattr(model, attr, None))]
+                        print(f"[DEBUG] 模型组件: {model_components[:15]}")
                         
                         ai_text = f"""✅ 音频已处理
 
@@ -388,9 +434,14 @@ def process_voice(audio, text_prompt=None):
 🔧 模型信息:
 - 模型类型: {type(model).__name__}
 - Forward 参数: {list(sig.parameters.keys())}
+- 模型组件: {', '.join(model_components[:10])}
 
-⚠️ 需要根据 forward 方法的参数构建正确的输入。"""
+⚠️ 需要根据 forward 方法的参数构建正确的输入。
+请查看控制台日志获取详细调试信息。"""
                     except Exception as e:
+                        print(f"[DEBUG] 检查模型结构失败: {e}")
+                        import traceback
+                        traceback.print_exc()
                         ai_text = f"✅ 音频已处理\n\n⚠️ 无法确定模型输入格式。\n错误: {str(e)}"
             
         except Exception as e:
