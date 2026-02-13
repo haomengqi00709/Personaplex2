@@ -372,21 +372,40 @@ def process_voice(audio, text_prompt=None):
                                     # audio_encoder.encode 需要 3D tensor (batch, channels, length)
                                     encoded_result = model.audio_encoder.encode(audio_input)
                                     
-                                    # 处理编码结果（可能是元组）
-                                    if isinstance(encoded_result, tuple):
+                                    # 处理编码结果 - 可能是 MimiEncoderOutput 对象
+                                    print(f"[DEBUG] 编码结果类型: {type(encoded_result)}")
+                                    
+                                    # 检查是否是 MimiEncoderOutput 对象
+                                    if hasattr(encoded_result, 'audio_codes'):
+                                        # 从 MimiEncoderOutput 中提取 audio_codes
+                                        user_audio_codes = encoded_result.audio_codes
+                                        print(f"[DEBUG] 从 MimiEncoderOutput 提取 audio_codes: shape={user_audio_codes.shape if hasattr(user_audio_codes, 'shape') else 'N/A'}")
+                                    elif isinstance(encoded_result, tuple):
                                         print(f"[DEBUG] 编码结果: 元组，长度={len(encoded_result)}")
                                         for i, item in enumerate(encoded_result):
                                             if hasattr(item, 'shape'):
                                                 print(f"[DEBUG] 编码结果[{i}]: shape={item.shape}, dtype={item.dtype}")
-                                        # 通常第一个是编码后的值，第二个是 codes
-                                        user_audio_codes = encoded_result[0] if len(encoded_result) > 0 else None
-                                        if len(encoded_result) > 1:
-                                            user_audio_codes = encoded_result[1]  # codes 通常在第二个位置
-                                    else:
-                                        print(f"[DEBUG] 编码结果: shape={encoded_result.shape if hasattr(encoded_result, 'shape') else type(encoded_result)}")
+                                            elif hasattr(item, 'audio_codes'):
+                                                print(f"[DEBUG] 编码结果[{i}]: MimiEncoderOutput with audio_codes")
+                                        # 尝试从元组中提取
+                                        for item in encoded_result:
+                                            if hasattr(item, 'audio_codes'):
+                                                user_audio_codes = item.audio_codes
+                                                break
+                                            elif isinstance(item, torch.Tensor):
+                                                user_audio_codes = item
+                                                break
+                                    elif isinstance(encoded_result, torch.Tensor):
                                         user_audio_codes = encoded_result
+                                    else:
+                                        # 尝试访问可能的属性
+                                        if hasattr(encoded_result, 'codes'):
+                                            user_audio_codes = encoded_result.codes
+                                        else:
+                                            print(f"[DEBUG] 无法提取 codes，使用原始结果")
+                                            user_audio_codes = encoded_result
                                     
-                                    print(f"[DEBUG] 使用 user_audio_codes: shape={user_audio_codes.shape if hasattr(user_audio_codes, 'shape') else 'N/A'}")
+                                    print(f"[DEBUG] 最终 user_audio_codes: shape={user_audio_codes.shape if hasattr(user_audio_codes, 'shape') else type(user_audio_codes)}")
                                     
                                 except Exception as encode_error:
                                     print(f"[DEBUG] audio_encoder 调用失败: {encode_error}")
@@ -426,47 +445,32 @@ def process_voice(audio, text_prompt=None):
                                     params = list(sig.parameters.keys())
                                     print(f"[DEBUG] get_unconditional_inputs 参数: {params}")
                                     
-                                    # 尝试不同的调用方式
-                                    try:
-                                        # 方式1: 无参数（使用默认值）
-                                        moshi_inputs = model.get_unconditional_inputs()
-                                        print(f"[DEBUG] 方式1成功: {list(moshi_inputs.keys())}")
-                                    except Exception as e1:
-                                        print(f"[DEBUG] 方式1失败: {e1}")
-                                        try:
-                                            # 方式2: 只传 device
-                                            moshi_inputs = model.get_unconditional_inputs(device=device)
-                                            print(f"[DEBUG] 方式2成功: {list(moshi_inputs.keys())}")
-                                        except Exception as e2:
-                                            print(f"[DEBUG] 方式2失败: {e2}")
-                                            # 方式3: 手动创建空的 moshi 输入
-                                            # 创建一个与 user_input_values 相同形状的零 tensor
-                                            if user_input_values is not None:
-                                                moshi_shape = user_input_values.shape
-                                                moshi_inputs = {
-                                                    'moshi_input_values': torch.zeros(moshi_shape, dtype=torch.float16, device=device)
-                                                }
-                                                print(f"[DEBUG] 方式3: 手动创建 moshi_input_values, shape: {moshi_shape}")
+                                    # 调用 get_unconditional_inputs（需要 num_samples 参数）
+                                    moshi_inputs = model.get_unconditional_inputs(num_samples=1)
+                                    print(f"[DEBUG] get_unconditional_inputs 成功: {list(moshi_inputs.keys())}")
+                                    for key, value in moshi_inputs.items():
+                                        if hasattr(value, 'shape'):
+                                            print(f"[DEBUG]   {key}: shape={value.shape}, dtype={value.dtype}")
                                 else:
                                     print("[DEBUG] 模型没有 get_unconditional_inputs 方法")
                                     # 手动创建
-                                    if user_input_values is not None:
-                                        moshi_shape = user_input_values.shape
+                                    if user_audio_codes is not None:
+                                        moshi_shape = user_audio_codes.shape
                                         moshi_inputs = {
-                                            'moshi_input_values': torch.zeros(moshi_shape, dtype=torch.float16, device=device)
+                                            'moshi_audio_codes': torch.zeros(moshi_shape, dtype=user_audio_codes.dtype, device=device)
                                         }
-                                        print(f"[DEBUG] 手动创建 moshi_input_values, shape: {moshi_shape}")
+                                        print(f"[DEBUG] 手动创建 moshi_audio_codes, shape: {moshi_shape}")
                             except Exception as e:
                                 print(f"[DEBUG] 获取 Moshi 输入失败: {e}")
                                 import traceback
                                 traceback.print_exc()
                                 # 最后的回退：手动创建
-                                if user_input_values is not None:
-                                    moshi_shape = user_input_values.shape
+                                if user_audio_codes is not None:
+                                    moshi_shape = user_audio_codes.shape
                                     moshi_inputs = {
-                                        'moshi_input_values': torch.zeros(moshi_shape, dtype=torch.float16, device=device)
+                                        'moshi_audio_codes': torch.zeros(moshi_shape, dtype=user_audio_codes.dtype, device=device)
                                     }
-                                    print(f"[DEBUG] 回退：手动创建 moshi_input_values, shape: {moshi_shape}")
+                                    print(f"[DEBUG] 回退：手动创建 moshi_audio_codes, shape: {moshi_shape}")
                             
                             # 尝试调用 generate 方法
                             print("[DEBUG] 尝试调用 generate 方法...")
@@ -486,9 +490,21 @@ def process_voice(audio, text_prompt=None):
                                 elif 'moshi_audio_codes' in moshi_inputs:
                                     generate_kwargs['moshi_audio_codes'] = moshi_inputs['moshi_audio_codes']
                                 
-                                # 文本输入（可选）
-                                if input_ids is not None:
+                                # 文本输入（必需的）- 从 get_unconditional_inputs 获取
+                                if 'input_ids' in moshi_inputs:
+                                    generate_kwargs['input_ids'] = moshi_inputs['input_ids']
+                                    print(f"[DEBUG] 使用 get_unconditional_inputs 的 input_ids: shape={moshi_inputs['input_ids'].shape}")
+                                elif input_ids is not None:
                                     generate_kwargs['input_ids'] = input_ids
+                                else:
+                                    # 如果没有 input_ids，尝试从 get_unconditional_inputs 获取
+                                    try:
+                                        unconditional = model.get_unconditional_inputs(num_samples=1)
+                                        if 'input_ids' in unconditional:
+                                            generate_kwargs['input_ids'] = unconditional['input_ids']
+                                            print(f"[DEBUG] 从 get_unconditional_inputs 获取 input_ids: shape={unconditional['input_ids'].shape}")
+                                    except:
+                                        pass
                                 
                                 print(f"[DEBUG] Generate 参数: {list(generate_kwargs.keys())}")
                                 
@@ -543,7 +559,10 @@ def process_voice(audio, text_prompt=None):
                                     elif 'moshi_audio_codes' in moshi_inputs:
                                         forward_kwargs['moshi_audio_codes'] = moshi_inputs['moshi_audio_codes']
                                     
-                                    if input_ids is not None:
+                                    # 文本输入
+                                    if 'input_ids' in moshi_inputs:
+                                        forward_kwargs['input_ids'] = moshi_inputs['input_ids']
+                                    elif input_ids is not None:
                                         forward_kwargs['input_ids'] = input_ids
                                     
                                     forward_output = model.forward(**forward_kwargs)
