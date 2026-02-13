@@ -514,201 +514,94 @@ def process_voice(audio, text_prompt=None):
                                 # 检查并对齐序列长度（所有输入必须长度一致）
                                 print("[DEBUG] ========== 开始序列长度对齐 ==========")
                                 
-                                # 获取每个输入的序列长度（第二个维度，即 seq_len）
-                                def get_seq_length(tensor, name):
-                                    """获取 tensor 的序列长度（第二个维度）"""
+                                # 获取序列长度（第二个维度）
+                                def get_seq_len(tensor):
                                     if tensor is None:
                                         return None
-                                    shape = tensor.shape
-                                    if len(shape) >= 2:
-                                        seq_len = shape[1]  # (batch, seq_len, ...)
-                                    else:
-                                        seq_len = shape[0]  # (seq_len,)
-                                    print(f"[DEBUG] {name}: shape={shape}, seq_len={seq_len}")
-                                    return seq_len, shape
+                                    if len(tensor.shape) >= 2:
+                                        return tensor.shape[1]  # (batch, seq_len, ...)
+                                    return tensor.shape[0]  # (seq_len,)
                                 
-                                seq_lengths = {}
-                                tensor_shapes = {}
-                                
+                                # 获取当前长度
+                                seq_lens = {}
                                 if 'input_ids' in generate_kwargs:
-                                    seq_len, shape = get_seq_length(generate_kwargs['input_ids'], 'input_ids')
-                                    seq_lengths['input_ids'] = seq_len
-                                    tensor_shapes['input_ids'] = shape
-                                    
+                                    seq_lens['input_ids'] = get_seq_len(generate_kwargs['input_ids'])
+                                    print(f"[DEBUG] input_ids: shape={generate_kwargs['input_ids'].shape}, seq_len={seq_lens['input_ids']}")
                                 if 'user_audio_codes' in generate_kwargs:
-                                    seq_len, shape = get_seq_length(generate_kwargs['user_audio_codes'], 'user_audio_codes')
-                                    seq_lengths['user_audio_codes'] = seq_len
-                                    tensor_shapes['user_audio_codes'] = shape
-                                    
+                                    seq_lens['user_audio_codes'] = get_seq_len(generate_kwargs['user_audio_codes'])
+                                    print(f"[DEBUG] user_audio_codes: shape={generate_kwargs['user_audio_codes'].shape}, seq_len={seq_lens['user_audio_codes']}")
                                 if 'moshi_audio_codes' in generate_kwargs:
-                                    seq_len, shape = get_seq_length(generate_kwargs['moshi_audio_codes'], 'moshi_audio_codes')
-                                    seq_lengths['moshi_audio_codes'] = seq_len
-                                    tensor_shapes['moshi_audio_codes'] = shape
+                                    seq_lens['moshi_audio_codes'] = get_seq_len(generate_kwargs['moshi_audio_codes'])
+                                    print(f"[DEBUG] moshi_audio_codes: shape={generate_kwargs['moshi_audio_codes'].shape}, seq_len={seq_lens['moshi_audio_codes']}")
                                 
-                                print(f"[DEBUG] 当前序列长度: {seq_lengths}")
-                                print(f"[DEBUG] 当前 tensor 形状: {tensor_shapes}")
+                                print(f"[DEBUG] 当前序列长度: {seq_lens}")
                                 
-                                # 如果长度不匹配，需要对齐
-                                if len(seq_lengths) > 1:
-                                    lengths = [v for v in seq_lengths.values() if v is not None]
-                                    if len(set(lengths)) > 1:
-                                        print(f"[DEBUG] ⚠️ 序列长度不匹配，开始对齐...")
-                                        
-                                        # 目标长度：使用 user_audio_codes 的长度（因为这是用户输入）
-                                        target_length = seq_lengths.get('user_audio_codes')
-                                        if target_length is None:
-                                            # 如果没有 user_audio_codes，使用最长的
-                                            target_length = max(lengths)
-                                        
-                                        print(f"[DEBUG] 目标序列长度: {target_length}")
-                                        
-                                        # 1. 对齐 input_ids
-                                        if 'input_ids' in generate_kwargs:
-                                            current_ids = generate_kwargs['input_ids']
-                                            current_len = seq_lengths['input_ids']
-                                            
-                                            if current_len != target_length:
-                                                print(f"[DEBUG] [对齐] input_ids: {current_len} -> {target_length}")
-                                                
-                                                # 获取 pad_token_id（确保不是 None）
-                                                pad_token_id = getattr(model.config, 'pad_token_id', None)
-                                                if pad_token_id is None:
-                                                    pad_token_id = getattr(model.config, 'eos_token_id', None)
-                                                if pad_token_id is None:
-                                                    pad_token_id = 0
-                                                
-                                                print(f"[DEBUG] 使用 pad_token_id: {pad_token_id}")
-                                                
-                                                # 计算需要填充的长度
-                                                pad_length = target_length - current_len
-                                                
-                                                if pad_length > 0:
-                                                    # 创建填充 tensor
-                                                    if len(current_ids.shape) == 2:
-                                                        # (batch, seq_len) -> (batch, target_len)
-                                                        padding = torch.full(
-                                                            (current_ids.shape[0], pad_length),
-                                                            pad_token_id,
-                                                            dtype=current_ids.dtype,
-                                                            device=current_ids.device
-                                                        )
-                                                        generate_kwargs['input_ids'] = torch.cat([current_ids, padding], dim=1)
-                                                        print(f"[DEBUG] [对齐完成] input_ids: {current_ids.shape} -> {generate_kwargs['input_ids'].shape}")
-                                                    else:
-                                                        # (seq_len,) -> (target_len,)
-                                                        padding = torch.full(
-                                                            (pad_length,),
-                                                            pad_token_id,
-                                                            dtype=current_ids.dtype,
-                                                            device=current_ids.device
-                                                        )
-                                                        generate_kwargs['input_ids'] = torch.cat([current_ids, padding], dim=0)
-                                                        print(f"[DEBUG] [对齐完成] input_ids: {current_ids.shape} -> {generate_kwargs['input_ids'].shape}")
-                                        
-                                        # 2. 对齐 moshi_audio_codes 以匹配 user_audio_codes
-                                        if 'user_audio_codes' in generate_kwargs and 'moshi_audio_codes' in generate_kwargs:
-                                            user_codes = generate_kwargs['user_audio_codes']
-                                            moshi_codes = generate_kwargs['moshi_audio_codes']
-                                            
-                                            user_seq_len = seq_lengths['user_audio_codes']
-                                            moshi_seq_len = seq_lengths['moshi_audio_codes']
-                                            
-                                            print(f"[DEBUG] user_audio_codes: shape={user_codes.shape}, seq_len={user_seq_len}")
-                                            print(f"[DEBUG] moshi_audio_codes: shape={moshi_codes.shape}, seq_len={moshi_seq_len}")
-                                            
-                                            if moshi_seq_len != user_seq_len:
-                                                print(f"[DEBUG] [对齐] moshi_audio_codes: {moshi_seq_len} -> {user_seq_len}")
-                                                
-                                                # 重复 moshi_codes 以匹配 user_codes 的长度
-                                                if moshi_seq_len < user_seq_len:
-                                                    repeat_times = user_seq_len // moshi_seq_len
-                                                    remainder = user_seq_len % moshi_seq_len
-                                                    
-                                                    print(f"[DEBUG] 重复次数: {repeat_times}, 余数: {remainder}")
-                                                    
-                                                    if len(moshi_codes.shape) == 3:
-                                                        # (batch, seq_len, code_dim)
-                                                        repeated = moshi_codes.repeat(1, repeat_times, 1)
-                                                        if remainder > 0:
-                                                            repeated = torch.cat([repeated, moshi_codes[:, :remainder, :]], dim=1)
-                                                    elif len(moshi_codes.shape) == 2:
-                                                        # (batch, seq_len)
-                                                        repeated = moshi_codes.repeat(1, repeat_times)
-                                                        if remainder > 0:
-                                                            repeated = torch.cat([repeated, moshi_codes[:, :remainder]], dim=1)
-                                                    else:
-                                                        # (seq_len,)
-                                                        repeated = moshi_codes.repeat(repeat_times)
-                                                        if remainder > 0:
-                                                            repeated = torch.cat([repeated, moshi_codes[:remainder]], dim=0)
-                                                    
-                                                    generate_kwargs['moshi_audio_codes'] = repeated
-                                                    print(f"[DEBUG] [对齐完成] moshi_audio_codes: {moshi_codes.shape} -> {repeated.shape}")
-                                        
-                                        # 验证对齐结果
-                                        print("[DEBUG] ========== 验证对齐结果 ==========")
-                                        final_lengths = {}
-                                        final_shapes = {}
-                                        
-                                        if 'input_ids' in generate_kwargs:
-                                            seq_len, shape = get_seq_length(generate_kwargs['input_ids'], 'input_ids (final)')
-                                            final_lengths['input_ids'] = seq_len
-                                            final_shapes['input_ids'] = shape
-                                            
-                                        if 'user_audio_codes' in generate_kwargs:
-                                            seq_len, shape = get_seq_length(generate_kwargs['user_audio_codes'], 'user_audio_codes (final)')
-                                            final_lengths['user_audio_codes'] = seq_len
-                                            final_shapes['user_audio_codes'] = shape
-                                            
-                                        if 'moshi_audio_codes' in generate_kwargs:
-                                            seq_len, shape = get_seq_length(generate_kwargs['moshi_audio_codes'], 'moshi_audio_codes (final)')
-                                            final_lengths['moshi_audio_codes'] = seq_len
-                                            final_shapes['moshi_audio_codes'] = shape
-                                        
-                                        print(f"[DEBUG] 对齐后序列长度: {final_lengths}")
-                                        print(f"[DEBUG] 对齐后 tensor 形状: {final_shapes}")
-                                        
-                                        # 最终验证 - 严格检查
-                                        final_lengths_list = [v for v in final_lengths.values() if v is not None]
-                                        
-                                        # 检查所有维度是否匹配（不仅仅是序列长度）
-                                        print("[DEBUG] 检查所有维度匹配...")
-                                        all_match = True
-                                        
-                                        if len(final_lengths_list) > 1:
-                                            if len(set(final_lengths_list)) > 1:
-                                                print(f"[DEBUG] ❌ 序列长度不匹配: {final_lengths}")
-                                                all_match = False
-                                        
-                                        # 检查 batch size 是否匹配
-                                        batch_sizes = {}
-                                        for key, tensor in generate_kwargs.items():
-                                            if isinstance(tensor, torch.Tensor) and len(tensor.shape) >= 1:
-                                                batch_sizes[key] = tensor.shape[0]
-                                        
-                                        if len(set(batch_sizes.values())) > 1:
-                                            print(f"[DEBUG] ❌ Batch size 不匹配: {batch_sizes}")
-                                            all_match = False
-                                        
-                                        if not all_match:
-                                            print(f"[DEBUG] ❌ 错误: 对齐失败!")
-                                            print(f"[DEBUG] 序列长度: {final_lengths}")
-                                            print(f"[DEBUG] Batch sizes: {batch_sizes}")
-                                            print(f"[DEBUG] Tensor 形状: {final_shapes}")
-                                            # 不继续执行，直接返回错误
-                                            ai_text = f"""❌ 输入对齐失败
+                                # 如果长度不匹配，对齐到 user_audio_codes 的长度
+                                if 'user_audio_codes' in seq_lens and seq_lens['user_audio_codes'] is not None:
+                                    target_len = seq_lens['user_audio_codes']
+                                    print(f"[DEBUG] 目标长度（user_audio_codes）: {target_len}")
+                                    
+                                    # 对齐 input_ids
+                                    if 'input_ids' in generate_kwargs:
+                                        ids = generate_kwargs['input_ids']
+                                        current_len = seq_lens['input_ids']
+                                        if current_len != target_len:
+                                            print(f"[DEBUG] 对齐 input_ids: {current_len} -> {target_len}")
+                                            pad_len = target_len - current_len
+                                            if pad_len > 0:
+                                                pad_token_id = getattr(model.config, 'pad_token_id', 0) or 0
+                                                if len(ids.shape) == 2:
+                                                    pad = torch.full((ids.shape[0], pad_len), pad_token_id, dtype=ids.dtype, device=ids.device)
+                                                    generate_kwargs['input_ids'] = torch.cat([ids, pad], dim=1)
+                                                else:
+                                                    pad = torch.full((pad_len,), pad_token_id, dtype=ids.dtype, device=ids.device)
+                                                    generate_kwargs['input_ids'] = torch.cat([ids, pad], dim=0)
+                                                print(f"[DEBUG] 对齐后 input_ids: shape={generate_kwargs['input_ids'].shape}")
+                                    
+                                    # 对齐 moshi_audio_codes
+                                    if 'moshi_audio_codes' in generate_kwargs:
+                                        moshi = generate_kwargs['moshi_audio_codes']
+                                        current_len = seq_lens['moshi_audio_codes']
+                                        if current_len != target_len:
+                                            print(f"[DEBUG] 对齐 moshi_audio_codes: {current_len} -> {target_len}")
+                                            if current_len < target_len:
+                                                repeat_times = target_len // current_len
+                                                remainder = target_len % current_len
+                                                if len(moshi.shape) == 3:
+                                                    repeated = moshi.repeat(1, repeat_times, 1)
+                                                    if remainder > 0:
+                                                        repeated = torch.cat([repeated, moshi[:, :remainder, :]], dim=1)
+                                                elif len(moshi.shape) == 2:
+                                                    repeated = moshi.repeat(1, repeat_times)
+                                                    if remainder > 0:
+                                                        repeated = torch.cat([repeated, moshi[:, :remainder]], dim=1)
+                                                else:
+                                                    repeated = moshi.repeat(repeat_times)
+                                                    if remainder > 0:
+                                                        repeated = torch.cat([repeated, moshi[:remainder]], dim=0)
+                                                generate_kwargs['moshi_audio_codes'] = repeated
+                                                print(f"[DEBUG] 对齐后 moshi_audio_codes: shape={generate_kwargs['moshi_audio_codes'].shape}")
+                                    
+                                    # 最终验证
+                                    final_lens = {}
+                                    for key in ['input_ids', 'user_audio_codes', 'moshi_audio_codes']:
+                                        if key in generate_kwargs:
+                                            final_lens[key] = get_seq_len(generate_kwargs[key])
+                                            print(f"[DEBUG] 最终 {key}: shape={generate_kwargs[key].shape}, seq_len={final_lens[key]}")
+                                    
+                                    # 检查是否匹配
+                                    lens_values = [v for v in final_lens.values() if v is not None]
+                                    if len(lens_values) > 1 and len(set(lens_values)) > 1:
+                                        print(f"[DEBUG] ❌ 对齐失败: {final_lens}")
+                                        ai_text = f"""❌ 序列长度对齐失败
 
-📊 序列长度: {final_lengths}
-📊 Batch sizes: {batch_sizes}
-📊 Tensor 形状: {final_shapes}
+📊 对齐后长度: {final_lens}
 
-⚠️ 无法对齐输入，模型无法处理。
-请查看控制台日志获取详细信息。"""
-                                            return user_text, ai_text
-                                        else:
-                                            print(f"[DEBUG] ✅ 所有输入已对齐!")
-                                            print(f"[DEBUG] 序列长度: {final_lengths_list[0] if final_lengths_list else 'N/A'}")
-                                            print(f"[DEBUG] Batch size: {list(batch_sizes.values())[0] if batch_sizes else 'N/A'}")
+⚠️ 无法对齐输入序列长度。
+请查看控制台日志。"""
+                                        return user_text, ai_text
+                                    else:
+                                        print(f"[DEBUG] ✅ 所有输入已对齐到长度: {lens_values[0] if lens_values else 'N/A'}")
                                 
                                 print("[DEBUG] ========== 序列长度对齐完成 ==========")
                                 
