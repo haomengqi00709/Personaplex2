@@ -31,21 +31,59 @@ def load_model():
         return f"✅ 模型已加载 ({mem:.2f} GB)"
     
     try:
-        if HF_TOKEN:
-            login(token=HF_TOKEN)
+        print("="*60)
+        print("开始加载模型")
+        print("="*60)
         
-        print("📥 加载模型...")
+        # 检查环境
+        print("\n[DEBUG] 检查环境...")
+        print(f"[DEBUG] MODEL_ID: {MODEL_ID}")
+        print(f"[DEBUG] HF_TOKEN: {'已设置' if HF_TOKEN else '未设置'}")
+        print(f"[DEBUG] Device: {device}")
+        
+        if HF_TOKEN:
+            print("[DEBUG] 登录 Hugging Face...")
+            login(token=HF_TOKEN)
+            print("[DEBUG] 登录成功")
+        else:
+            print("[DEBUG] ⚠️  HF_TOKEN 未设置，可能无法访问 gated repo")
+        
         model_status = "加载中..."
         
-        # 首先检查 Transformers 版本
+        # 检查 Transformers 版本和配置
         import transformers
+        from transformers import AutoConfig
         transformers_version = transformers.__version__
-        print(f"Transformers 版本: {transformers_version}")
+        print(f"\n[DEBUG] Transformers 版本: {transformers_version}")
+        print(f"[DEBUG] Transformers 路径: {transformers.__file__}")
         
-        # 尝试加载模型
+        # 尝试加载配置
+        print("\n[DEBUG] 步骤1: 加载模型配置...")
         try:
-            # 方法1: 使用 AutoModel + trust_remote_code
-            print("尝试使用 AutoModel 加载...")
+            config = AutoConfig.from_pretrained(
+                MODEL_ID,
+                trust_remote_code=True
+            )
+            print(f"[DEBUG] ✅ 配置加载成功")
+            print(f"[DEBUG] - Model type: {getattr(config, 'model_type', 'N/A')}")
+            print(f"[DEBUG] - Architectures: {getattr(config, 'architectures', 'N/A')}")
+            print(f"[DEBUG] - Auto map: {getattr(config, 'auto_map', 'N/A')}")
+            
+            # 检查是否有自定义代码
+            if hasattr(config, 'auto_map'):
+                print(f"[DEBUG] - 发现自定义代码映射: {config.auto_map}")
+        except Exception as e:
+            print(f"[DEBUG] ❌ 配置加载失败: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
+        
+        # 尝试多种加载方式
+        print("\n[DEBUG] 步骤2: 尝试加载模型...")
+        
+        # 方法1: 使用 AutoModel + trust_remote_code
+        print("[DEBUG] 方法1: 使用 AutoModel.from_pretrained + trust_remote_code=True")
+        try:
             model = AutoModel.from_pretrained(
                 MODEL_ID,
                 torch_dtype=torch.float16,
@@ -53,47 +91,114 @@ def load_model():
                 low_cpu_mem_usage=True,
                 trust_remote_code=True
             )
-            print("✅ 使用 AutoModel 加载成功")
+            print("[DEBUG] ✅ 方法1成功: AutoModel 加载成功")
         except Exception as e1:
-            print(f"⚠️  AutoModel 失败: {e1}")
+            print(f"[DEBUG] ❌ 方法1失败: {type(e1).__name__}: {e1}")
+            import traceback
+            traceback.print_exc()
             
-            # 方法2: 尝试从源码安装的 Transformers
-            error_msg = str(e1)
-            if "does not recognize this architecture" in error_msg or "personaplex" in error_msg.lower():
-                return f"""❌ Transformers 版本不支持 PersonaPlex 架构
+            # 方法2: 尝试使用 MoshiForConditionalGeneration
+            print("\n[DEBUG] 方法2: 尝试使用 MoshiForConditionalGeneration...")
+            try:
+                from transformers import MoshiForConditionalGeneration
+                model = MoshiForConditionalGeneration.from_pretrained(
+                    MODEL_ID,
+                    torch_dtype=torch.float16,
+                    device_map="auto",
+                    low_cpu_mem_usage=True,
+                    trust_remote_code=True
+                )
+                print("[DEBUG] ✅ 方法2成功: MoshiForConditionalGeneration 加载成功")
+            except Exception as e2:
+                print(f"[DEBUG] ❌ 方法2失败: {type(e2).__name__}: {e2}")
+                import traceback
+                traceback.print_exc()
+                
+                # 方法3: 检查是否有自定义模型类
+                print("\n[DEBUG] 方法3: 检查自定义模型类...")
+                error_msg = str(e1)
+                
+                if "does not recognize this architecture" in error_msg or "personaplex" in error_msg.lower():
+                    # 尝试查看模型仓库中的自定义代码
+                    print("[DEBUG] 尝试查找自定义代码...")
+                    try:
+                        from huggingface_hub import hf_hub_download
+                        import json
+                        
+                        # 下载 config.json 查看 auto_map
+                        config_path = hf_hub_download(
+                            repo_id=MODEL_ID,
+                            filename="config.json",
+                            token=HF_TOKEN
+                        )
+                        with open(config_path, 'r') as f:
+                            config_data = json.load(f)
+                        
+                        print(f"[DEBUG] Config 内容: {json.dumps(config_data, indent=2)[:500]}...")
+                        
+                        if 'auto_map' in config_data:
+                            print(f"[DEBUG] 发现 auto_map: {config_data['auto_map']}")
+                            # 尝试手动加载自定义代码
+                            print("[DEBUG] 尝试手动加载自定义代码...")
+                            # 这里可能需要根据 auto_map 的内容来加载
+                        
+                    except Exception as e3:
+                        print(f"[DEBUG] ❌ 查找自定义代码失败: {e3}")
+                    
+                    return f"""❌ 模型架构识别失败
 
-当前版本: {transformers_version}
+当前 Transformers 版本: {transformers_version}
+错误: {error_msg}
 
-解决方案:
-1. 升级 Transformers:
-   pip install --upgrade transformers
+调试信息:
+- 已尝试 AutoModel.from_pretrained
+- 已尝试 MoshiForConditionalGeneration
+- 已检查模型配置
 
-2. 或从源码安装最新版本:
-   pip install git+https://github.com/huggingface/transformers.git
+可能的原因:
+1. PersonaPlex 架构需要特定的 Transformers 版本
+2. 需要从模型仓库加载自定义代码
+3. 模型配置中的 auto_map 指向的代码不可用
 
-3. 然后重新启动程序"""
-            else:
-                raise e1
+建议:
+1. 检查模型仓库是否有自定义代码文件
+2. 查看 Hugging Face 模型页面了解加载要求
+3. 或使用官方 PersonaPlex 代码库"""
+                else:
+                    raise e1
+        
+        # 验证模型
+        print("\n[DEBUG] 步骤3: 验证模型...")
+        if model is None:
+            raise Exception("模型加载失败，model 为 None")
+        
+        print(f"[DEBUG] 模型类型: {type(model).__name__}")
+        print(f"[DEBUG] 模型设备: {next(model.parameters()).device if hasattr(model, 'parameters') else 'N/A'}")
         
         model.eval()
         mem = torch.cuda.memory_allocated(0) / 1e9 if torch.cuda.is_available() else 0
         model_status = "已加载"
+        
+        print(f"\n[DEBUG] ✅ 模型加载完成！显存: {mem:.2f} GB")
+        print("="*60)
+        
         return f"✅ 模型加载成功！({mem:.2f} GB)"
         
     except Exception as e:
         model_status = "加载失败"
         error_msg = str(e)
-        if "does not recognize this architecture" in error_msg:
-            return f"""❌ Transformers 不支持 PersonaPlex 架构
+        error_type = type(e).__name__
+        
+        print(f"\n[DEBUG] ❌ 最终错误: {error_type}: {error_msg}")
+        import traceback
+        traceback.print_exc()
+        
+        return f"""❌ 模型加载失败
 
-请执行以下命令升级 Transformers:
-pip install --upgrade transformers
+错误类型: {error_type}
+错误信息: {error_msg}
 
-或从源码安装:
-pip install git+https://github.com/huggingface/transformers.git
-
-然后重新启动程序"""
-        return f"❌ 失败: {error_msg}"
+请查看控制台日志获取详细调试信息。"""
 
 def process_voice(audio):
     """处理语音"""
