@@ -352,11 +352,26 @@ with gr.Blocks(title="PersonaPlex 语音对话", theme=gr.themes.Soft()) as demo
     load_btn.click(fn=load_model, outputs=status)
     
     # 语音处理（包含文本提示）
+    def process_voice_wrapper(audio):
+        """包装函数，处理音频输入"""
+        if audio is None:
+            return "", ""
+        # 获取文本提示的默认值
+        default_prompt = "You are a helpful AI assistant. Respond naturally."
+        return process_voice(audio, default_prompt)
+    
     audio_input.change(
-        fn=process_voice,
-        inputs=[audio_input, text_prompt_input],
+        fn=process_voice_wrapper,
+        inputs=[audio_input],
         outputs=[user_text, ai_text]
     )
+    
+    # 可选：如果文本提示改变，也触发处理（如果音频已存在）
+    # text_prompt_input.change(
+    #     fn=lambda prompt, audio: process_voice(audio, prompt) if audio else ("", ""),
+    #     inputs=[text_prompt_input, audio_input],
+    #     outputs=[user_text, ai_text]
+    # )
 
 if __name__ == "__main__":
     print("="*60)
