@@ -10,7 +10,7 @@ import yaml
 import soundfile as sf
 import numpy as np
 from pathlib import Path
-from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq, MoshiForConditionalGeneration
+from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq, MoshiForConditionalGeneration, MoshiProcessor
 from huggingface_hub import login
 import warnings
 warnings.filterwarnings("ignore")
@@ -68,17 +68,27 @@ class PersonaPlexTester:
             print(f"模型 ID: {model_id}")
             print(f"使用数据类型: {model_config['torch_dtype']}")
             
-            # 加载处理器
+            # 加载处理器（PersonaPlex 基于 Moshi，优先使用 MoshiProcessor）
             print("加载处理器...")
             try:
-                self.processor = AutoProcessor.from_pretrained(
+                # 首先尝试 MoshiProcessor
+                self.processor = MoshiProcessor.from_pretrained(
                     model_id,
                     trust_remote_code=True
                 )
-            except Exception as e:
-                print(f"⚠️  使用 AutoProcessor 失败，尝试其他方法: {e}")
-                # 如果 AutoProcessor 不可用，尝试直接使用模型
-                self.processor = None
+                print("✅ 使用 MoshiProcessor 加载成功")
+            except Exception as e1:
+                print(f"⚠️  MoshiProcessor 失败: {e1}")
+                print("   尝试使用 AutoProcessor...")
+                try:
+                    self.processor = AutoProcessor.from_pretrained(
+                        model_id,
+                        trust_remote_code=True
+                    )
+                    print("✅ 使用 AutoProcessor 加载成功")
+                except Exception as e2:
+                    print(f"❌ AutoProcessor 也失败: {e2}")
+                    self.processor = None
             
             # 加载模型（使用 float16 降低显存）
             print("加载模型权重...")

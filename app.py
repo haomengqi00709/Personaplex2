@@ -9,7 +9,7 @@ import torch
 import numpy as np
 import soundfile as sf
 import gradio as gr
-from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq, MoshiForConditionalGeneration
+from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq, MoshiForConditionalGeneration, MoshiProcessor
 from huggingface_hub import login
 import warnings
 warnings.filterwarnings("ignore")
@@ -56,10 +56,21 @@ def load_model_once():
             print("   请设置 HF_TOKEN 或运行: huggingface-cli login")
         
         print("📥 加载处理器...")
-        processor = AutoProcessor.from_pretrained(
-            MODEL_ID,
-            trust_remote_code=True
-        )
+        try:
+            # 首先尝试 MoshiProcessor（PersonaPlex 基于 Moshi 架构）
+            processor = MoshiProcessor.from_pretrained(
+                MODEL_ID,
+                trust_remote_code=True
+            )
+            print("✅ 使用 MoshiProcessor 加载成功")
+        except Exception as e1:
+            print(f"⚠️  MoshiProcessor 失败: {e1}")
+            print("   尝试使用 AutoProcessor...")
+            processor = AutoProcessor.from_pretrained(
+                MODEL_ID,
+                trust_remote_code=True
+            )
+            print("✅ 使用 AutoProcessor 加载成功")
         
         print("📥 加载模型...")
         try:

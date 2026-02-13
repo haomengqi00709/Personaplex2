@@ -8,7 +8,7 @@ import os
 import torch
 import numpy as np
 import soundfile as sf
-from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq, MoshiForConditionalGeneration
+from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq, MoshiForConditionalGeneration, MoshiProcessor
 from huggingface_hub import login
 
 # 配置
@@ -86,13 +86,27 @@ def load_model(device):
     print("使用 float16 以降低显存占用...")
     
     try:
-        # 尝试加载处理器
+        # 尝试加载处理器（PersonaPlex 基于 Moshi，使用 MoshiProcessor）
         print("\n1. 加载处理器...")
-        processor = AutoProcessor.from_pretrained(
-            MODEL_ID,
-            trust_remote_code=True
-        )
-        print("✅ 处理器加载成功")
+        try:
+            # 首先尝试 MoshiProcessor（PersonaPlex 基于 Moshi 架构）
+            processor = MoshiProcessor.from_pretrained(
+                MODEL_ID,
+                trust_remote_code=True
+            )
+            print("✅ 使用 MoshiProcessor 加载成功")
+        except Exception as e1:
+            print(f"⚠️  MoshiProcessor 失败: {e1}")
+            print("   尝试使用 AutoProcessor...")
+            try:
+                processor = AutoProcessor.from_pretrained(
+                    MODEL_ID,
+                    trust_remote_code=True
+                )
+                print("✅ 使用 AutoProcessor 加载成功")
+            except Exception as e2:
+                print(f"❌ AutoProcessor 也失败: {e2}")
+                raise
         
         # 尝试加载模型
         print("\n2. 加载模型...")
