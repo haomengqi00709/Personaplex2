@@ -50,20 +50,32 @@ export HF_TOKEN=your_huggingface_token_here
 
 ### 3. 运行测试
 
-**方式 1: Web 前端（推荐）**
+**方式 1: 命令行测试（验证模型加载）**
 ```bash
-python app.py
-```
-然后访问 RunPod 提供的公共 URL 或 http://localhost:7860
-
-**方式 2: 命令行测试**
-```bash
-# 快速测试
+# 快速测试（验证模型能否加载）
 python quick_test.py
 
 # 完整测试
 python test_personaplex.py
 ```
+
+**方式 2: 使用官方代码库（推荐，用于完整功能）**
+
+当前代码主要用于验证模型下载和加载。如需完整推理功能，请使用 NVIDIA 官方代码库：
+
+```bash
+cd /workspace
+git clone https://github.com/NVIDIA/personaplex.git
+cd personaplex
+pip install -r requirements.txt
+# 按照官方 README 使用
+```
+
+**方式 3: Web 前端（需要 processor 支持）**
+```bash
+python app.py
+```
+注意：Web 前端需要 processor 支持，如果 processor 不可用，功能会受限。
 
 ## 📁 项目结构
 
