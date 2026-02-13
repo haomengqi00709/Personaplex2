@@ -277,31 +277,95 @@ def process_voice(audio, text_prompt=None):
             sr = 24000
         
         duration = len(audio_data) / sr
-        user_text = f"🎤 语音输入 ({duration:.2f}秒)"
+        user_text = f"🎤 语音输入 ({duration:.2f}秒, {len(audio_data)} 采样点)"
+        print(f"[DEBUG] 处理后音频: {len(audio_data)} 采样点, {sr}Hz, {duration:.2f}秒")
         
-        # 尝试调用模型（即使没有processor）
+        # 尝试调用模型进行推理
         try:
-            # 将音频转换为tensor
-            audio_tensor = torch.from_numpy(audio_data).float().unsqueeze(0).to(device)
+            # 编码音频
+            print("[DEBUG] 编码音频...")
+            audio_tensor = encode_audio_manual(audio_data, sr)
             
-            # 尝试直接调用模型（需要根据实际架构调整）
-            # 由于PersonaPlex架构特殊，这里提供一个基础尝试
+            if audio_tensor is None:
+                raise Exception("音频编码失败")
+            
+            print(f"[DEBUG] 文本提示: {text_prompt}")
+            print(f"[DEBUG] 音频 tensor 形状: {audio_tensor.shape}")
+            
+            # 尝试调用模型
+            print("[DEBUG] 调用模型进行推理...")
             with torch.no_grad():
-                # 尝试使用模型的forward方法
-                # 注意：这可能需要特定的输入格式
-                try:
-                    # 创建一个简单的输入（可能需要调整）
-                    # PersonaPlex可能需要audio codes和text tokens
-                    # 这里我们尝试最简单的调用
-                    
-                    # 由于没有processor，我们无法正确编码输入
-                    # 但可以显示模型已准备好
-                    ai_text = f"✅ 已收到语音 ({duration:.2f}秒)\n\n模型已加载并准备处理。\n\n⚠️ 由于缺少processor，无法完成完整推理。\n模型需要特定的音频编码格式。"
-                    
-                except Exception as e:
-                    ai_text = f"✅ 模型已加载\n\n⚠️ 推理需要processor或了解输入格式。\n错误: {str(e)}"
+                # 检查模型是否有 generate 方法
+                if hasattr(model, 'generate'):
+                    print("[DEBUG] 使用 generate 方法...")
+                    try:
+                        # 尝试构建输入
+                        audio_input = audio_tensor.unsqueeze(0).to(device)
+                        
+                        # 如果模型有 encode_audio 方法
+                        if hasattr(model, 'encode_audio'):
+                            print("[DEBUG] 使用 encode_audio 方法...")
+                            encoded_audio = model.encode_audio(audio_input)
+                            print(f"[DEBUG] 编码后形状: {encoded_audio.shape if hasattr(encoded_audio, 'shape') else 'N/A'}")
+                        
+                        # 尝试生成
+                        print("[DEBUG] 尝试生成回复...")
+                        
+                        ai_text = f"""✅ 音频已处理
+
+📊 处理信息:
+- 音频长度: {duration:.2f}秒
+- 采样点数: {len(audio_data)}
+- 采样率: {sr}Hz
+- 文本提示: {text_prompt}
+
+🔧 模型状态:
+- 模型已加载: ✅
+- 音频编码: ✅
+- 推理准备: ⚠️
+
+⚠️ 注意: 由于缺少 processor，无法确定模型的精确输入格式。
+模型可能需要:
+1. 音频编码后的 tokens（通过 Mimi 编解码器）
+2. 文本 tokens
+3. 特定的输入结构
+
+💡 建议: 查看模型文档或使用官方代码库了解输入格式。"""
+                        
+                    except Exception as e:
+                        print(f"[DEBUG] 推理尝试失败: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        ai_text = f"✅ 音频已处理\n\n⚠️ 推理失败: {str(e)}\n\n可能需要特定的输入格式。"
+                else:
+                    print("[DEBUG] 模型没有 generate 方法，尝试 forward...")
+                    # 尝试使用 forward 方法
+                    try:
+                        # 检查模型的 forward 签名
+                        import inspect
+                        sig = inspect.signature(model.forward)
+                        print(f"[DEBUG] Forward 方法签名: {sig}")
+                        
+                        ai_text = f"""✅ 音频已处理
+
+📊 处理信息:
+- 音频长度: {duration:.2f}秒
+- 采样点数: {len(audio_data)}
+- 采样率: {sr}Hz
+
+🔧 模型信息:
+- 模型类型: {type(model).__name__}
+- Forward 参数: {list(sig.parameters.keys())}
+
+⚠️ 需要根据 forward 方法的参数构建正确的输入。"""
+                    except Exception as e:
+                        ai_text = f"✅ 音频已处理\n\n⚠️ 无法确定模型输入格式。\n错误: {str(e)}"
+            
         except Exception as e:
-            ai_text = f"✅ 音频已处理\n\n⚠️ 模型调用需要特定格式。\n{str(e)}"
+            print(f"[DEBUG] 模型调用失败: {e}")
+            import traceback
+            traceback.print_exc()
+            ai_text = f"✅ 音频已处理\n\n⚠️ 模型调用需要特定格式。\n错误: {str(e)}"
         
         return user_text, ai_text
         
