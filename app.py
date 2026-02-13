@@ -368,8 +368,7 @@ def main():
         server_name="0.0.0.0",  # 允许外部访问
         server_port=5001,       # RunPod 端口 5001
         share=False,            # 不创建公共链接（RunPod 有自己的 URL）
-        show_error=True,
-        show_api=False
+        show_error=True
     )
 
 if __name__ == "__main__":
