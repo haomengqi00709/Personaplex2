@@ -327,6 +327,14 @@ with gr.Blocks(title="PersonaPlex 语音对话", theme=gr.themes.Soft()) as demo
             gr.Markdown("### 🤖 AI 回复")
             ai_text = gr.Textbox(label="", lines=12, interactive=False, placeholder="...")
     
+    # 文本提示（可选）
+    text_prompt_input = gr.Textbox(
+        label="文本提示（可选）",
+        placeholder="例如: You are a helpful AI assistant.",
+        lines=2,
+        value="You are a helpful AI assistant. Respond naturally."
+    )
+    
     # 语音输入
     audio_input = gr.Audio(
         label="",
@@ -343,10 +351,10 @@ with gr.Blocks(title="PersonaPlex 语音对话", theme=gr.themes.Soft()) as demo
     # 手动重新加载
     load_btn.click(fn=load_model, outputs=status)
     
-    # 语音处理
+    # 语音处理（包含文本提示）
     audio_input.change(
         fn=process_voice,
-        inputs=[audio_input],
+        inputs=[audio_input, text_prompt_input],
         outputs=[user_text, ai_text]
     )
 
