@@ -13,19 +13,23 @@
 
 ## 📤 步骤 2: 推送代码到 GitHub
 
-在本地终端执行以下命令：
+### 方法 A: 使用便捷脚本（推荐）
 
 ```bash
 # 1. 添加远程仓库（替换 YOUR_USERNAME 和 REPO_NAME）
 git remote add origin https://github.com/YOUR_USERNAME/REPO_NAME.git
 
-# 2. 创建初始提交
-git commit -m "Initial commit: PersonaPlex test project with web frontend"
+# 2. 运行推送脚本
+./push_to_github.sh
+```
 
-# 3. 设置主分支名称（如果 GitHub 使用 main）
-git branch -M main
+### 方法 B: 手动推送
 
-# 4. 推送代码
+```bash
+# 1. 添加远程仓库（替换 YOUR_USERNAME 和 REPO_NAME）
+git remote add origin https://github.com/YOUR_USERNAME/REPO_NAME.git
+
+# 2. 推送代码（分支已重命名为 main）
 git push -u origin main
 ```
 
