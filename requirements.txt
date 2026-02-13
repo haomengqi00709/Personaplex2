@@ -1,0 +1,13 @@
+torch>=2.0.0
+transformers>=4.40.0
+accelerate>=0.25.0
+sentencepiece>=0.1.99
+numpy>=1.24.0
+scipy>=1.10.0
+soundfile>=0.12.1
+librosa>=0.10.0
+huggingface-hub>=0.20.0
+safetensors>=0.4.0
+pyyaml>=6.0
+gradio>=4.0.0
+
