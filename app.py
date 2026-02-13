@@ -123,8 +123,11 @@ def process_audio(audio_file, text_prompt, voice_prompt_file):
     """处理音频输入并生成响应"""
     global model, processor
     
-    if model is None or processor is None:
-        return None, "❌ 请先加载模型！", None
+    if model is None:
+        return None, "❌ 请先加载模型！点击'加载模型'按钮", None
+    
+    if processor is None:
+        return None, "❌ Processor 不可用。\n\n这可能是因为:\n1. transformers 版本不支持 PersonaPlex processor\n2. 需要使用官方 PersonaPlex 代码库\n\n建议: 使用官方代码库进行完整测试", None
     
     try:
         # 处理用户音频
@@ -348,6 +351,9 @@ def main():
     print("="*60)
     print("启动 PersonaPlex Web 界面")
     print("="*60)
+    print(f"服务器将运行在: http://0.0.0.0:5001")
+    print("在 RunPod 上访问: 使用 Pod 的公共 URL，端口 5001")
+    print("="*60)
     
     if not HF_TOKEN:
         print("⚠️  警告: HF_TOKEN 未设置")
@@ -356,12 +362,14 @@ def main():
     demo = create_interface()
     
     # 启动服务器
-    # 在 RunPod 上，使用 share=False 并绑定到 0.0.0.0
+    # 在 RunPod 上，使用 share=False 并绑定到 0.0.0.0，端口 5001
+    print("\n🚀 启动 Web 服务器...")
     demo.launch(
         server_name="0.0.0.0",  # 允许外部访问
-        server_port=7860,       # Gradio 默认端口
+        server_port=5001,       # RunPod 端口 5001
         share=False,            # 不创建公共链接（RunPod 有自己的 URL）
-        show_error=True
+        show_error=True,
+        show_api=False
     )
 
 if __name__ == "__main__":
