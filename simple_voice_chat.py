@@ -20,7 +20,7 @@ MODEL_ID = "nvidia/personaplex-7b-v1"
 HF_TOKEN = os.getenv("HF_TOKEN")
 model = None
 device = "cuda" if torch.cuda.is_available() else "cpu"
-is_recording = False
+recording_state = False
 
 def load_model():
     """加载模型"""
@@ -123,19 +123,23 @@ with gr.Blocks(title="PersonaPlex 语音对话", theme=gr.themes.Soft()) as demo
     with gr.Row():
         with gr.Column():
             gr.Markdown("### 👤 您说的话")
-            user_text = gr.Textbox(label="", lines=10, interactive=False, placeholder="您说的话会显示在这里...")
+            user_text = gr.Textbox(label="", lines=15, interactive=False, placeholder="您说的话会显示在这里...")
         
         with gr.Column():
             gr.Markdown("### 🤖 AI 回复")
-            ai_text = gr.Textbox(label="", lines=10, interactive=False, placeholder="AI的回复会显示在这里...")
+            ai_text = gr.Textbox(label="", lines=15, interactive=False, placeholder="AI的回复会显示在这里...")
     
-        # 语音输入
+    # 开始/停止说话按钮
+    record_btn = gr.Button("🎤 开始说话", variant="primary", size="lg")
+    
+    # 隐藏的音频输入（通过按钮控制）
     audio_input = gr.Audio(
         label="",
         type="filepath",
         sources=["microphone"],
         format="wav",
-        show_label=False
+        show_label=False,
+        visible=False
     )
     
     gr.Markdown("""
@@ -143,19 +147,38 @@ with gr.Blocks(title="PersonaPlex 语音对话", theme=gr.themes.Soft()) as demo
     ### 📝 使用说明
     
     1. 点击"加载模型"（首次需要几分钟）
-    2. 点击下方麦克风图标开始录音
-    3. 停止录音后自动处理
+    2. 点击"开始说话"按钮开始录音
+    3. 再次点击停止录音并自动处理
     4. 查看左侧（您说的话）和右侧（AI回复）
     """)
     
+    # 切换录音状态
+    def toggle_recording():
+        global recording_state
+        recording_state = not recording_state
+        if recording_state:
+            # 开始录音 - 显示音频组件
+            return "🛑 停止说话", gr.update(visible=True), gr.update(value=None)
+        else:
+            # 停止录音 - 隐藏音频组件并处理
+            return "🎤 开始说话", gr.update(visible=False), gr.update(value=None)
+    
     # 当音频输入改变时自动处理
     def auto_process(audio):
-        if audio is not None:
+        if audio is not None and model is not None:
             return process_voice(audio)
         return "", ""
     
     # 事件绑定
     load_btn.click(fn=load_model, outputs=status)
+    
+    # 按钮点击切换录音状态
+    record_btn.click(
+        fn=toggle_recording,
+        outputs=[record_btn, audio_input, audio_input]
+    )
+    
+    # 音频输入改变时自动处理
     audio_input.change(
         fn=auto_process,
         inputs=[audio_input],
