@@ -331,22 +331,26 @@ def process_voice(audio, text_prompt=None):
                 if hasattr(model, 'generate'):
                     print("[DEBUG] 使用 generate 方法...")
                     try:
-                        # 尝试构建输入
-                        audio_input = audio_tensor.unsqueeze(0).to(device)
+                        # 准备音频输入 - 需要 3D tensor (batch, channels, length)
+                        print("[DEBUG] 准备音频输入...")
+                        print(f"[DEBUG] 原始音频 tensor 形状: {audio_tensor.shape}")
                         
-                        # 如果模型有 encode_audio 方法
-                        if hasattr(model, 'encode_audio'):
-                            print("[DEBUG] 使用 encode_audio 方法...")
-                            encoded_audio = model.encode_audio(audio_input)
-                            print(f"[DEBUG] 编码后形状: {encoded_audio.shape if hasattr(encoded_audio, 'shape') else 'N/A'}")
+                        # audio_encoder 需要 3D: (batch, channels, length)
+                        # 如果 audio_tensor 是 1D，需要添加 batch 和 channel 维度
+                        if len(audio_tensor.shape) == 1:
+                            # (length) -> (1, 1, length)
+                            audio_input = audio_tensor.unsqueeze(0).unsqueeze(0).to(device)
+                        elif len(audio_tensor.shape) == 2:
+                            # (batch, length) -> (batch, 1, length)
+                            audio_input = audio_tensor.unsqueeze(1).to(device)
+                        else:
+                            audio_input = audio_tensor.to(device)
                         
-                        # 尝试生成
-                        print("[DEBUG] 尝试生成回复...")
+                        print(f"[DEBUG] 准备后的音频输入形状: {audio_input.shape}")
                         
                         # 检查模型的实际结构
                         print("[DEBUG] 检查模型结构...")
                         print(f"[DEBUG] 模型类型: {type(model).__name__}")
-                        print(f"[DEBUG] 模型属性: {[attr for attr in dir(model) if not attr.startswith('_')][:20]}")
                         
                         # 尝试查看模型的 forward 方法
                         import inspect
@@ -362,8 +366,8 @@ def process_voice(audio, text_prompt=None):
                                 print("[DEBUG] 发现 audio_encoder，尝试编码音频...")
                                 try:
                                     # 使用 audio_encoder 编码音频
-                                    # 注意：audio_encoder 可能需要特定的输入格式
-                                    encoded_result = model.audio_encoder(audio_input)
+                                    # audio_encoder.encode 需要 3D tensor (batch, channels, length)
+                                    encoded_result = model.audio_encoder.encode(audio_input)
                                     
                                     # 处理编码结果（可能是元组）
                                     if isinstance(encoded_result, tuple):
@@ -408,17 +412,38 @@ def process_voice(audio, text_prompt=None):
                                     except:
                                         print("[DEBUG] tokenizer 不可用，跳过文本输入")
                             
+                            # 获取 Moshi 无条件输入（必需的）
+                            print("[DEBUG] 获取 Moshi 无条件输入...")
+                            try:
+                                if hasattr(model, 'get_unconditional_inputs'):
+                                    moshi_inputs = model.get_unconditional_inputs(batch_size=1, device=device)
+                                    print(f"[DEBUG] Moshi 无条件输入: {list(moshi_inputs.keys())}")
+                                else:
+                                    print("[DEBUG] 模型没有 get_unconditional_inputs 方法")
+                                    moshi_inputs = {}
+                            except Exception as e:
+                                print(f"[DEBUG] 获取 Moshi 输入失败: {e}")
+                                moshi_inputs = {}
+                            
                             # 尝试调用 generate 方法
                             print("[DEBUG] 尝试调用 generate 方法...")
                             try:
                                 # 构建 generate 的输入
                                 generate_kwargs = {}
                                 
+                                # 用户音频输入
                                 if user_audio_codes is not None:
                                     generate_kwargs['user_audio_codes'] = user_audio_codes
                                 elif user_input_values is not None:
                                     generate_kwargs['user_input_values'] = user_input_values
                                 
+                                # Moshi 输入（必需的）
+                                if 'moshi_input_values' in moshi_inputs:
+                                    generate_kwargs['moshi_input_values'] = moshi_inputs['moshi_input_values']
+                                elif 'moshi_audio_codes' in moshi_inputs:
+                                    generate_kwargs['moshi_audio_codes'] = moshi_inputs['moshi_audio_codes']
+                                
+                                # 文本输入（可选）
                                 if input_ids is not None:
                                     generate_kwargs['input_ids'] = input_ids
                                 
@@ -468,6 +493,12 @@ def process_voice(audio, text_prompt=None):
                                         forward_kwargs['user_audio_codes'] = user_audio_codes
                                     elif user_input_values is not None:
                                         forward_kwargs['user_input_values'] = user_input_values
+                                    
+                                    # Moshi 输入（必需的）
+                                    if 'moshi_input_values' in moshi_inputs:
+                                        forward_kwargs['moshi_input_values'] = moshi_inputs['moshi_input_values']
+                                    elif 'moshi_audio_codes' in moshi_inputs:
+                                        forward_kwargs['moshi_audio_codes'] = moshi_inputs['moshi_audio_codes']
                                     
                                     if input_ids is not None:
                                         forward_kwargs['input_ids'] = input_ids
