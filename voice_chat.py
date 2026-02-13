@@ -668,22 +668,47 @@ def process_voice(audio, text_prompt=None):
                                         print(f"[DEBUG] 对齐后序列长度: {final_lengths}")
                                         print(f"[DEBUG] 对齐后 tensor 形状: {final_shapes}")
                                         
-                                        # 最终验证
+                                        # 最终验证 - 严格检查
                                         final_lengths_list = [v for v in final_lengths.values() if v is not None]
-                                        if len(set(final_lengths_list)) > 1:
-                                            print(f"[DEBUG] ❌ 错误: 对齐后长度仍不匹配!")
-                                            print(f"[DEBUG] 长度差异: {final_lengths}")
+                                        
+                                        # 检查所有维度是否匹配（不仅仅是序列长度）
+                                        print("[DEBUG] 检查所有维度匹配...")
+                                        all_match = True
+                                        
+                                        if len(final_lengths_list) > 1:
+                                            if len(set(final_lengths_list)) > 1:
+                                                print(f"[DEBUG] ❌ 序列长度不匹配: {final_lengths}")
+                                                all_match = False
+                                        
+                                        # 检查 batch size 是否匹配
+                                        batch_sizes = {}
+                                        for key, tensor in generate_kwargs.items():
+                                            if isinstance(tensor, torch.Tensor) and len(tensor.shape) >= 1:
+                                                batch_sizes[key] = tensor.shape[0]
+                                        
+                                        if len(set(batch_sizes.values())) > 1:
+                                            print(f"[DEBUG] ❌ Batch size 不匹配: {batch_sizes}")
+                                            all_match = False
+                                        
+                                        if not all_match:
+                                            print(f"[DEBUG] ❌ 错误: 对齐失败!")
+                                            print(f"[DEBUG] 序列长度: {final_lengths}")
+                                            print(f"[DEBUG] Batch sizes: {batch_sizes}")
+                                            print(f"[DEBUG] Tensor 形状: {final_shapes}")
                                             # 不继续执行，直接返回错误
-                                            ai_text = f"""❌ 序列长度对齐失败
+                                            ai_text = f"""❌ 输入对齐失败
 
-📊 对齐后长度: {final_lengths}
-📊 对齐后形状: {final_shapes}
+📊 序列长度: {final_lengths}
+📊 Batch sizes: {batch_sizes}
+📊 Tensor 形状: {final_shapes}
 
-⚠️ 无法对齐输入序列长度，模型无法处理。
+⚠️ 无法对齐输入，模型无法处理。
 请查看控制台日志获取详细信息。"""
                                             return user_text, ai_text
                                         else:
-                                            print(f"[DEBUG] ✅ 所有输入序列长度已对齐: {final_lengths_list[0] if final_lengths_list else 'N/A'}")
+                                            print(f"[DEBUG] ✅ 所有输入已对齐!")
+                                            print(f"[DEBUG] 序列长度: {final_lengths_list[0] if final_lengths_list else 'N/A'}")
+                                            print(f"[DEBUG] Batch size: {list(batch_sizes.values())[0] if batch_sizes else 'N/A'}")
                                 
                                 print("[DEBUG] ========== 序列长度对齐完成 ==========")
                                 
