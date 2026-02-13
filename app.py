@@ -30,8 +30,30 @@ def load_model_once():
     
     try:
         # 认证
+        auth_success = False
         if HF_TOKEN:
-            login(token=HF_TOKEN)
+            if not HF_TOKEN.startswith('hf_'):
+                print("⚠️  警告: Token 格式可能不正确（应以 'hf_' 开头）")
+            try:
+                login(token=HF_TOKEN)
+                auth_success = True
+            except Exception as e:
+                print(f"⚠️  Token 认证失败: {e}")
+        
+        # 如果没有 token 或 token 失败，尝试使用 CLI 登录
+        if not auth_success:
+            try:
+                from huggingface_hub import whoami
+                user_info = whoami()
+                if user_info:
+                    print(f"✅ 使用 huggingface-cli 认证: {user_info.get('name', 'Unknown')}")
+                    auth_success = True
+            except:
+                pass
+        
+        if not auth_success:
+            print("⚠️  警告: 未找到有效的认证方式")
+            print("   请设置 HF_TOKEN 或运行: huggingface-cli login")
         
         print("📥 加载处理器...")
         processor = AutoProcessor.from_pretrained(

@@ -32,16 +32,46 @@ def check_environment():
         device = "cpu"
     
     # 检查 Hugging Face Token
+    auth_success = False
     if HF_TOKEN:
-        print(f"✅ HF_TOKEN 已设置")
+        print(f"✅ HF_TOKEN 环境变量已设置")
+        # 验证 token 格式（应该以 hf_ 开头）
+        if not HF_TOKEN.startswith('hf_'):
+            print(f"⚠️  警告: Token 格式可能不正确（应以 'hf_' 开头）")
         try:
             login(token=HF_TOKEN)
             print("✅ Hugging Face 认证成功")
+            auth_success = True
         except Exception as e:
-            print(f"⚠️  Hugging Face 认证失败: {e}")
+            print(f"❌ Hugging Face 认证失败: {e}")
+            print("\n请检查:")
+            print("1. Token 是否正确（从 https://huggingface.co/settings/tokens 获取）")
+            print("2. Token 是否有 'read' 权限")
+            print("3. Token 是否已过期")
     else:
-        print("⚠️  HF_TOKEN 未设置")
-        print("   请在 RunPod 环境变量中设置 HF_TOKEN")
+        print("⚠️  HF_TOKEN 环境变量未设置")
+        print("   尝试使用 huggingface-cli 登录...")
+        try:
+            from huggingface_hub import whoami
+            user_info = whoami()
+            if user_info:
+                print(f"✅ 已通过 huggingface-cli 登录: {user_info.get('name', 'Unknown')}")
+                auth_success = True
+        except:
+            print("❌ 未找到任何认证方式")
+            print("\n请选择以下方式之一:")
+            print("1. 设置环境变量: export HF_TOKEN=your_token")
+            print("2. 使用命令行登录: huggingface-cli login")
+    
+    if not auth_success:
+        print("\n" + "="*60)
+        print("⚠️  重要: 需要先接受模型许可协议！")
+        print("="*60)
+        print("1. 访问: https://huggingface.co/nvidia/personaplex-7b-v1")
+        print("2. 登录你的 Hugging Face 账号")
+        print("3. 点击 'Agree and access repository' 接受许可协议")
+        print("4. 然后重新运行此脚本")
+        print("="*60)
     
     print()
     return device
