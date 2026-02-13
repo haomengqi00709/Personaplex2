@@ -238,6 +238,38 @@ PersonaPlex 使用自定义架构，需要从模型仓库加载自定义代码�
 
 请查看控制台日志获取详细调试信息。"""
 
+def encode_audio_manual(audio_data, sample_rate=24000):
+    """手动编码音频（不依赖 processor）"""
+    try:
+        print("[DEBUG] 开始手动编码音频...")
+        
+        # 1. 确保音频是单声道
+        if len(audio_data.shape) > 1:
+            audio_data = np.mean(audio_data, axis=1)
+        
+        # 2. 归一化到 [-1, 1]
+        max_val = np.abs(audio_data).max()
+        if max_val > 1.0 or max_val == 0:
+            if max_val > 0:
+                audio_data = audio_data / max_val
+            else:
+                audio_data = audio_data.astype(np.float32)
+        else:
+            audio_data = audio_data.astype(np.float32)
+        
+        # 3. 转换为 tensor
+        audio_tensor = torch.from_numpy(audio_data).float()
+        
+        print(f"[DEBUG] 音频编码完成: shape={audio_tensor.shape}, dtype={audio_tensor.dtype}")
+        
+        return audio_tensor
+        
+    except Exception as e:
+        print(f"[DEBUG] 音频编码失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
 def process_voice(audio, text_prompt=None):
     """处理语音并生成回复"""
     global model
