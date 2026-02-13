@@ -19,10 +19,12 @@ MODEL_ID = "nvidia/personaplex-7b-v1"
 HF_TOKEN = os.getenv("HF_TOKEN")
 model = None
 device = "cuda" if torch.cuda.is_available() else "cpu"
+model_loading = False
+model_status = "未加载"
 
 def load_model():
     """加载模型"""
-    global model
+    global model, model_status
     
     if model is not None:
         mem = torch.cuda.memory_allocated(0) / 1e9 if torch.cuda.is_available() else 0
@@ -33,25 +35,65 @@ def load_model():
             login(token=HF_TOKEN)
         
         print("📥 加载模型...")
+        model_status = "加载中..."
         
-        # 使用 AutoModel 加载（会自动使用自定义代码）
-        # 虽然会有警告，但这是正确的加载方式
-        print("⚠️  注意: PersonaPlex 使用自定义架构，会有权重不匹配警告（这是正常的）")
-        model = AutoModel.from_pretrained(
-            MODEL_ID,
-            torch_dtype=torch.float16,
-            device_map="auto",
-            low_cpu_mem_usage=True,
-            trust_remote_code=True,  # 关键：信任远程代码以加载自定义架构
-            ignore_mismatched_sizes=True  # 忽略大小不匹配
-        )
+        # 首先检查 Transformers 版本
+        import transformers
+        transformers_version = transformers.__version__
+        print(f"Transformers 版本: {transformers_version}")
+        
+        # 尝试加载模型
+        try:
+            # 方法1: 使用 AutoModel + trust_remote_code
+            print("尝试使用 AutoModel 加载...")
+            model = AutoModel.from_pretrained(
+                MODEL_ID,
+                torch_dtype=torch.float16,
+                device_map="auto",
+                low_cpu_mem_usage=True,
+                trust_remote_code=True
+            )
+            print("✅ 使用 AutoModel 加载成功")
+        except Exception as e1:
+            print(f"⚠️  AutoModel 失败: {e1}")
+            
+            # 方法2: 尝试从源码安装的 Transformers
+            error_msg = str(e1)
+            if "does not recognize this architecture" in error_msg or "personaplex" in error_msg.lower():
+                return f"""❌ Transformers 版本不支持 PersonaPlex 架构
+
+当前版本: {transformers_version}
+
+解决方案:
+1. 升级 Transformers:
+   pip install --upgrade transformers
+
+2. 或从源码安装最新版本:
+   pip install git+https://github.com/huggingface/transformers.git
+
+3. 然后重新启动程序"""
+            else:
+                raise e1
         
         model.eval()
         mem = torch.cuda.memory_allocated(0) / 1e9 if torch.cuda.is_available() else 0
+        model_status = "已加载"
         return f"✅ 模型加载成功！({mem:.2f} GB)"
         
     except Exception as e:
-        return f"❌ 失败: {str(e)}"
+        model_status = "加载失败"
+        error_msg = str(e)
+        if "does not recognize this architecture" in error_msg:
+            return f"""❌ Transformers 不支持 PersonaPlex 架构
+
+请执行以下命令升级 Transformers:
+pip install --upgrade transformers
+
+或从源码安装:
+pip install git+https://github.com/huggingface/transformers.git
+
+然后重新启动程序"""
+        return f"❌ 失败: {error_msg}"
 
 def process_voice(audio):
     """处理语音"""
@@ -107,13 +149,28 @@ def process_voice(audio):
     except Exception as e:
         return f"❌ 错误: {str(e)}", ""
 
+# 启动时自动加载模型
+def auto_load_model():
+    """程序启动时自动加载模型"""
+    print("="*60)
+    print("自动加载模型...")
+    print("="*60)
+    return load_model()
+
 # 创建界面
 with gr.Blocks(title="PersonaPlex 语音对话", theme=gr.themes.Soft()) as demo:
     gr.Markdown("# 🎙️ PersonaPlex 语音对话")
     
-    # 加载模型
-    load_btn = gr.Button("🔄 加载模型", variant="primary", size="lg")
-    status = gr.Textbox(label="状态", value="❌ 模型未加载", interactive=False)
+    # 状态显示（自动加载）
+    status = gr.Textbox(
+        label="模型状态", 
+        value="正在加载模型...", 
+        interactive=False,
+        lines=3
+    )
+    
+    # 手动重新加载按钮（可选）
+    load_btn = gr.Button("🔄 重新加载模型", variant="secondary", size="sm")
     
     gr.Markdown("---")
     
@@ -137,7 +194,13 @@ with gr.Blocks(title="PersonaPlex 语音对话", theme=gr.themes.Soft()) as demo
     )
     
     # 事件
+    # 启动时自动加载模型
+    demo.load(fn=auto_load_model, outputs=status)
+    
+    # 手动重新加载
     load_btn.click(fn=load_model, outputs=status)
+    
+    # 语音处理
     audio_input.change(
         fn=process_voice,
         inputs=[audio_input],
