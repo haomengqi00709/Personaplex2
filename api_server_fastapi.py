@@ -205,14 +205,20 @@ def process_voice(audio_path):
         other_mimi.reset_streaming()
         lm_gen.reset_streaming()
         
-        # 2. 读取音频
-        audio_data, sr = sf.read(audio_path)
-        if len(audio_data.shape) > 1:
-            audio_data = np.mean(audio_data, axis=1)
+        # 2. 读取音频（使用 librosa，支持更多格式如 WebM, OGG 等）
+        import librosa
+        try:
+            # 使用 librosa 读取，支持更多格式
+            audio_data, sr = librosa.load(audio_path, sr=None, mono=True)
+        except Exception as e:
+            # 如果 librosa 失败，尝试 soundfile
+            print(f"[WARN] librosa 读取失败，尝试 soundfile: {e}")
+            audio_data, sr = sf.read(audio_path)
+            if len(audio_data.shape) > 1:
+                audio_data = np.mean(audio_data, axis=1)
         
         # 3. 重采样到模型采样率 (24kHz)
         if sr != mimi.sample_rate:
-            import librosa
             audio_data = librosa.resample(audio_data, orig_sr=sr, target_sr=mimi.sample_rate)
         
         # 4. 转换为 (C, T) 格式
@@ -360,8 +366,19 @@ async def process(audio: UploadFile = File(...)):
     if not audio:
         raise HTTPException(status_code=400, detail="没有上传音频文件")
     
-    # 保存上传的音频到临时文件
-    input_file = tempfile.NamedTemporaryFile(delete=False, suffix='.wav')
+    # 根据上传文件的扩展名确定格式
+    filename = audio.filename or "audio"
+    file_ext = os.path.splitext(filename)[1].lower()
+    
+    # 支持的格式
+    if file_ext in ['.wav', '.webm', '.ogg', '.mp3', '.m4a', '.flac']:
+        suffix = file_ext
+    else:
+        # 默认使用 .webm（浏览器录音常用格式）
+        suffix = '.webm'
+    
+    # 保存上传的音频到临时文件（保留原始格式）
+    input_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
     try:
         content = await audio.read()
         input_file.write(content)
