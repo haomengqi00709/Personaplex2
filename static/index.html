@@ -312,6 +312,13 @@
             </label>
         </div>
 
+        <div class="mode-toggle" style="margin-top: 10px;">
+            <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+                <input type="checkbox" id="noiseReductionCheckbox" checked style="width: 20px; height: 20px; cursor: pointer;">
+                <span>Enable Noise Reduction</span>
+            </label>
+        </div>
+
         <div class="main-content">
             <div class="panel">
                 <h3>You Said</h3>
@@ -535,6 +542,10 @@
                 const formData = new FormData();
                 formData.append('audio', audioBlob, 'recording.webm');
                 formData.append('reset_history', resetHistory);
+                
+                // 添加降噪选项
+                const noiseReductionEnabled = document.getElementById('noiseReductionCheckbox').checked;
+                formData.append('enable_noise_reduction', noiseReductionEnabled);
 
                 const response = await fetch(`${API_BASE}/process`, {
                     method: 'POST',

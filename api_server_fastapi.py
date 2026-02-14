@@ -205,7 +205,7 @@ def load_model():
         print(f"[ERROR] {error_msg}")
         return False, error_msg
 
-def process_voice(audio_path, reset_history=False):
+def process_voice(audio_path, reset_history=False, enable_noise_reduction=True):
     """处理语音并生成回复 - 使用官方方式"""
     global mimi, other_mimi, lm_gen, text_tokenizer, keep_history
     
@@ -267,15 +267,39 @@ def process_voice(audio_path, reset_history=False):
         if audio_data is None or sr is None:
             raise Exception("无法读取音频数据")
         
-        # 3. 重采样到模型采样率 (24kHz)
+        # 3. 音频降噪处理（如果启用）
+        if enable_noise_reduction:
+            try:
+                import noisereduce as nr
+                print("[INFO] 应用降噪处理...")
+                audio_data = nr.reduce_noise(y=audio_data, sr=sr, stationary=False, prop_decrease=0.8)
+                print("[INFO] 降噪完成")
+            except ImportError:
+                # 如果没有 noisereduce，使用简单的音量归一化和基础处理
+                print("[INFO] noisereduce 未安装，使用基础降噪...")
+                # 简单的音量归一化
+                max_val = np.max(np.abs(audio_data))
+                if max_val > 0:
+                    audio_data = audio_data / max_val * 0.95  # 归一化到 95%
+                # 简单的静音段移除
+                energy = np.abs(audio_data)
+                threshold = np.percentile(energy, 10)  # 低于 10% 分位数的视为静音
+                audio_data = audio_data[energy > threshold]
+            except Exception as e:
+                print(f"[WARN] 降噪处理失败，继续使用原始音频: {e}")
+        else:
+            print("[INFO] 降噪处理已禁用")
+        
+        # 4. 重采样到模型采样率 (24kHz)
         if sr != mimi.sample_rate:
             audio_data = librosa.resample(audio_data, orig_sr=sr, target_sr=mimi.sample_rate)
+            sr = mimi.sample_rate  # 更新采样率
         
-        # 4. 转换为 (C, T) 格式
+        # 5. 转换为 (C, T) 格式
         if len(audio_data.shape) == 1:
             audio_data = audio_data[np.newaxis, :]  # (1, T)
         
-        # 5. 使用官方方式编码和处理
+        # 6. 使用官方方式编码和处理
         user_audio = torch.tensor(audio_data, dtype=torch.float32, device=device)
         generated_frames = []
         generated_text = []
@@ -467,7 +491,8 @@ async def clear_history():
 @app.post("/api/process")
 async def process(
     audio: UploadFile = File(...),
-    reset_history: str = Form("false")
+    reset_history: str = Form("false"),
+    enable_noise_reduction: str = Form("true")
 ):
     """处理音频"""
     if not audio:
@@ -500,8 +525,9 @@ async def process(
     filename = audio.filename or f"audio{file_ext}"
     print(f"[INFO] 检测到音频格式: {file_ext}, 文件名: {filename}")
     
-    # 解析 reset_history 参数（FormData 传过来的是字符串）
+    # 解析参数（FormData 传过来的是字符串）
     reset_history_bool = reset_history.lower() == "true" if isinstance(reset_history, str) else bool(reset_history)
+    enable_noise_reduction_bool = enable_noise_reduction.lower() == "true" if isinstance(enable_noise_reduction, str) else bool(enable_noise_reduction)
     
     # 保存上传的音频到临时文件
     input_file = tempfile.NamedTemporaryFile(delete=False, suffix=file_ext)
@@ -509,7 +535,11 @@ async def process(
         input_file.write(content)
         input_file.close()
         
-        output_path, ai_text, error = process_voice(input_file.name, reset_history=reset_history_bool)
+        output_path, ai_text, error = process_voice(
+            input_file.name, 
+            reset_history=reset_history_bool,
+            enable_noise_reduction=enable_noise_reduction_bool
+        )
         
         if error:
             raise HTTPException(status_code=500, detail=error)

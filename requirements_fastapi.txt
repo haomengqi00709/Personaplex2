@@ -13,4 +13,5 @@ librosa
 huggingface-hub
 safetensors
 pyyaml
+noisereduce
 
