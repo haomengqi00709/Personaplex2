@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PersonaPlex 语音对话</title>
+    <title>PersonaPlex Voice Chat</title>
     <style>
         * {
             margin: 0;
@@ -67,6 +67,21 @@
             color: #721c24;
         }
 
+        .status.listening {
+            background: #d1ecf1;
+            color: #0c5460;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.7;
+            }
+        }
+
         .main-content {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -102,7 +117,7 @@
         }
 
         .text-display:empty::before {
-            content: "等待内容...";
+            content: "Waiting for content...";
             color: #999;
         }
 
@@ -113,6 +128,55 @@
 
         .controls {
             text-align: center;
+        }
+
+        .mode-toggle {
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .toggle-btn {
+            padding: 10px 20px;
+            border: 2px solid #667eea;
+            background: white;
+            color: #667eea;
+            border-radius: 25px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: 500;
+        }
+
+        .toggle-btn.active {
+            background: #667eea;
+            color: white;
+        }
+
+        .toggle-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 10px rgba(102, 126, 234, 0.3);
+        }
+
+        .vad-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #ccc;
+            margin-left: 10px;
+            transition: background 0.2s;
+        }
+
+        .vad-indicator.active {
+            background: #28a745;
+            animation: blink 0.5s infinite;
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
         }
 
         .record-btn {
@@ -141,15 +205,6 @@
         .record-btn.recording {
             background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
             animation: pulse 1.5s infinite;
-        }
-
-        @keyframes pulse {
-            0%, 100% {
-                opacity: 1;
-            }
-            50% {
-                opacity: 0.7;
-            }
         }
 
         .record-btn:disabled {
@@ -183,6 +238,25 @@
             100% { transform: rotate(360deg); }
         }
 
+        .vad-settings {
+            margin-top: 15px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            font-size: 0.9em;
+            color: #666;
+        }
+
+        .vad-settings label {
+            display: block;
+            margin-bottom: 5px;
+        }
+
+        .vad-settings input[type="range"] {
+            width: 100%;
+            margin-bottom: 10px;
+        }
+
         @media (max-width: 768px) {
             .main-content {
                 grid-template-columns: 1fr;
@@ -200,41 +274,71 @@
 </head>
 <body>
     <div class="container">
-        <h1>🎤 PersonaPlex 语音对话</h1>
-        <p class="subtitle">点击下方按钮开始说话</p>
+        <h1>🎤 PersonaPlex Voice Chat</h1>
+        <p class="subtitle">Click the button below to start speaking</p>
 
-        <div id="status" class="status loading">正在加载模型...</div>
+        <div id="status" class="status loading">Loading model...</div>
+
+        <div class="mode-toggle">
+            <button id="manualMode" class="toggle-btn active">Manual Mode</button>
+            <button id="vadMode" class="toggle-btn">
+                VAD Mode
+                <span id="vadIndicator" class="vad-indicator"></span>
+            </button>
+        </div>
+
+        <div id="vadSettings" class="vad-settings" style="display: none;">
+            <label>
+                Voice Threshold: <span id="thresholdValue">0.01</span>
+                <input type="range" id="thresholdSlider" min="0.001" max="0.1" step="0.001" value="0.01">
+            </label>
+            <label>
+                Silence Duration (ms): <span id="silenceValue">1500</span>
+                <input type="range" id="silenceSlider" min="500" max="5000" step="100" value="1500">
+            </label>
+        </div>
 
         <div class="main-content">
             <div class="panel">
-                <h3>您说的话</h3>
+                <h3>You Said</h3>
                 <div id="userText" class="text-display"></div>
             </div>
 
             <div class="panel">
-                <h3>AI 回复</h3>
+                <h3>AI Response</h3>
                 <div id="aiText" class="text-display"></div>
                 <audio id="audioPlayer" class="audio-player" controls style="display: none;"></audio>
             </div>
         </div>
 
         <div class="controls">
-            <button id="recordBtn" class="record-btn" disabled>🎤 开始说话</button>
+            <button id="recordBtn" class="record-btn" disabled>🎤 Start Speaking</button>
             <div id="loadingSpinner" class="loading-spinner">
                 <div class="spinner"></div>
-                <p style="margin-top: 10px; color: #666;">处理中...</p>
+                <p style="margin-top: 10px; color: #666;">Processing...</p>
             </div>
         </div>
     </div>
 
     <script>
-        // 自动检测 API 地址
+        // Auto-detect API address
         const API_BASE = `${window.location.protocol}//${window.location.host}/api`;
         let mediaRecorder = null;
         let audioChunks = [];
         let isRecording = false;
+        let isVADMode = false;
+        let audioContext = null;
+        let analyser = null;
+        let microphone = null;
+        let vadInterval = null;
+        let silenceTimer = null;
+        let isSpeaking = false;
+        
+        // VAD settings
+        let voiceThreshold = 0.01;
+        let silenceDuration = 1500; // ms
 
-        // 检查模型状态
+        // Check model status
         async function checkStatus() {
             try {
                 const response = await fetch(`${API_BASE}/status`);
@@ -244,15 +348,15 @@
                 const recordBtn = document.getElementById('recordBtn');
                 
                 if (data.status === 'loaded') {
-                    statusEl.textContent = `✅ 模型已加载 (显存: ${data.memory_gb} GB)`;
+                    statusEl.textContent = `✅ Model loaded (VRAM: ${data.memory_gb} GB)`;
                     statusEl.className = 'status ready';
                     recordBtn.disabled = false;
                 } else {
-                    statusEl.textContent = '⏳ 正在加载模型...';
+                    statusEl.textContent = '⏳ Loading model...';
                     statusEl.className = 'status loading';
                     recordBtn.disabled = true;
                     
-                    // 尝试加载模型
+                    // Try to load model
                     const loadResponse = await fetch(`${API_BASE}/load`, { method: 'POST' });
                     const loadData = await loadResponse.json();
                     
@@ -266,16 +370,97 @@
                     }
                 }
             } catch (error) {
-                console.error('检查状态失败:', error);
-                document.getElementById('status').textContent = '❌ 无法连接到服务器';
+                console.error('Status check failed:', error);
+                document.getElementById('status').textContent = '❌ Cannot connect to server';
                 document.getElementById('status').className = 'status error';
             }
         }
 
-        // 开始录音
-        async function startRecording() {
+        // Initialize VAD
+        async function initVAD() {
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                microphone = audioContext.createMediaStreamSource(stream);
+                microphone.connect(analyser);
+                
+                analyser.fftSize = 256;
+                analyser.smoothingTimeConstant = 0.8;
+                
+                // Start VAD monitoring
+                startVADMonitoring(stream);
+            } catch (error) {
+                console.error('VAD initialization failed:', error);
+                alert('Cannot access microphone. Please check permissions.');
+            }
+        }
+
+        // VAD monitoring
+        function startVADMonitoring(stream) {
+            const dataArray = new Uint8Array(analyser.frequencyBinCount);
+            let silenceStartTime = null;
+            
+            vadInterval = setInterval(() => {
+                analyser.getByteFrequencyData(dataArray);
+                
+                // Calculate average volume
+                const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
+                const normalizedVolume = average / 255;
+                
+                const indicator = document.getElementById('vadIndicator');
+                
+                if (normalizedVolume > voiceThreshold) {
+                    // Voice detected
+                    indicator.classList.add('active');
+                    
+                    if (!isSpeaking) {
+                        // Start recording
+                        isSpeaking = true;
+                        silenceStartTime = null;
+                        startRecording(stream);
+                    }
+                } else {
+                    // Silence detected
+                    indicator.classList.remove('active');
+                    
+                    if (isSpeaking) {
+                        if (silenceStartTime === null) {
+                            silenceStartTime = Date.now();
+                        } else if (Date.now() - silenceStartTime > silenceDuration) {
+                            // Stop recording after silence duration
+                            isSpeaking = false;
+                            stopRecording();
+                        }
+                    }
+                }
+            }, 100); // Check every 100ms
+        }
+
+        // Stop VAD
+        function stopVAD() {
+            if (vadInterval) {
+                clearInterval(vadInterval);
+                vadInterval = null;
+            }
+            if (silenceTimer) {
+                clearTimeout(silenceTimer);
+                silenceTimer = null;
+            }
+            if (audioContext) {
+                audioContext.close();
+                audioContext = null;
+            }
+            document.getElementById('vadIndicator').classList.remove('active');
+        }
+
+        // Start recording
+        async function startRecording(stream = null) {
+            try {
+                if (!stream) {
+                    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                }
+                
                 mediaRecorder = new MediaRecorder(stream);
                 audioChunks = [];
 
@@ -284,49 +469,56 @@
                 };
 
                 mediaRecorder.onstop = async () => {
-                    const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
                     await processAudio(audioBlob);
                     
-                    // 停止所有音频轨道
-                    stream.getTracks().forEach(track => track.stop());
+                    // Stop all audio tracks (only if not in VAD mode)
+                    if (!isVADMode) {
+                        stream.getTracks().forEach(track => track.stop());
+                    }
                 };
 
                 mediaRecorder.start();
                 isRecording = true;
                 
                 const btn = document.getElementById('recordBtn');
-                btn.textContent = '⏹️ 停止录音';
+                btn.textContent = '⏹️ Stop Recording';
                 btn.classList.add('recording');
+                
+                if (isVADMode) {
+                    document.getElementById('status').textContent = '🎤 Listening... (VAD Mode)';
+                    document.getElementById('status').className = 'status listening';
+                }
             } catch (error) {
-                console.error('录音失败:', error);
-                alert('无法访问麦克风，请检查权限设置');
+                console.error('Recording failed:', error);
+                alert('Cannot access microphone. Please check permissions.');
             }
         }
 
-        // 停止录音
+        // Stop recording
         function stopRecording() {
             if (mediaRecorder && isRecording) {
                 mediaRecorder.stop();
                 isRecording = false;
                 
                 const btn = document.getElementById('recordBtn');
-                btn.textContent = '🎤 开始说话';
+                btn.textContent = '🎤 Start Speaking';
                 btn.classList.remove('recording');
                 btn.disabled = true;
             }
         }
 
-        // 处理音频
+        // Process audio
         async function processAudio(audioBlob) {
             const loadingSpinner = document.getElementById('loadingSpinner');
             loadingSpinner.classList.add('active');
             
-            document.getElementById('userText').textContent = '🎤 正在处理您的语音...';
-            document.getElementById('aiText').textContent = '⏳ 等待 AI 回复...';
+            document.getElementById('userText').textContent = '🎤 Processing your voice...';
+            document.getElementById('aiText').textContent = '⏳ Waiting for AI response...';
 
             try {
                 const formData = new FormData();
-                formData.append('audio', audioBlob, 'recording.wav');
+                formData.append('audio', audioBlob, 'recording.webm');
 
                 const response = await fetch(`${API_BASE}/process`, {
                     method: 'POST',
@@ -336,45 +528,81 @@
                 const data = await response.json();
 
                 if (data.success) {
-                    document.getElementById('userText').textContent = '🎤 您说了：（语音输入）';
-                    document.getElementById('aiText').textContent = `🤖 AI 回复：${data.text}`;
+                    document.getElementById('userText').textContent = '🎤 You said: (voice input)';
+                    document.getElementById('aiText').textContent = `🤖 AI Response: ${data.text}`;
                     
-                    // 播放音频
+                    // Play audio
                     const audioPlayer = document.getElementById('audioPlayer');
-                    // 修复 URL：audio_url 已经包含 /api/audio/，不需要再加 API_BASE
                     const audioUrl = data.audio_url.startsWith('http') 
                         ? data.audio_url 
                         : `${window.location.protocol}//${window.location.host}${data.audio_url}`;
                     
-                    console.log('音频 URL:', audioUrl);
+                    console.log('Audio URL:', audioUrl);
                     audioPlayer.src = audioUrl;
                     audioPlayer.style.display = 'block';
                     
-                    // 添加错误处理
+                    // Add error handling
                     audioPlayer.onerror = function(e) {
-                        console.error('音频加载失败:', e);
-                        document.getElementById('aiText').textContent += '\n❌ 音频加载失败';
+                        console.error('Audio load failed:', e);
+                        document.getElementById('aiText').textContent += '\n❌ Audio load failed';
                     };
                     
                     audioPlayer.onloadeddata = function() {
-                        console.log('音频加载成功，开始播放');
+                        console.log('Audio loaded successfully, starting playback');
                         audioPlayer.play().catch(err => {
-                            console.error('播放失败:', err);
+                            console.error('Playback failed:', err);
                         });
                     };
                 } else {
-                    document.getElementById('aiText').textContent = `❌ 错误: ${data.error}`;
+                    document.getElementById('aiText').textContent = `❌ Error: ${data.error}`;
                 }
             } catch (error) {
-                console.error('处理失败:', error);
-                document.getElementById('aiText').textContent = `❌ 处理失败: ${error.message}`;
+                console.error('Processing failed:', error);
+                document.getElementById('aiText').textContent = `❌ Processing failed: ${error.message}`;
             } finally {
                 loadingSpinner.classList.remove('active');
-                document.getElementById('recordBtn').disabled = false;
+                const btn = document.getElementById('recordBtn');
+                if (!isVADMode) {
+                    btn.disabled = false;
+                }
             }
         }
 
-        // 事件监听
+        // Mode toggle
+        document.getElementById('manualMode').addEventListener('click', () => {
+            if (isVADMode) {
+                stopVAD();
+                isVADMode = false;
+                document.getElementById('manualMode').classList.add('active');
+                document.getElementById('vadMode').classList.remove('active');
+                document.getElementById('vadSettings').style.display = 'none';
+                document.getElementById('status').textContent = '✅ Ready (Manual Mode)';
+                document.getElementById('status').className = 'status ready';
+            }
+        });
+
+        document.getElementById('vadMode').addEventListener('click', () => {
+            if (!isVADMode) {
+                isVADMode = true;
+                document.getElementById('vadMode').classList.add('active');
+                document.getElementById('manualMode').classList.remove('active');
+                document.getElementById('vadSettings').style.display = 'block';
+                initVAD();
+            }
+        });
+
+        // VAD settings
+        document.getElementById('thresholdSlider').addEventListener('input', (e) => {
+            voiceThreshold = parseFloat(e.target.value);
+            document.getElementById('thresholdValue').textContent = voiceThreshold.toFixed(3);
+        });
+
+        document.getElementById('silenceSlider').addEventListener('input', (e) => {
+            silenceDuration = parseInt(e.target.value);
+            document.getElementById('silenceValue').textContent = silenceDuration;
+        });
+
+        // Event listeners
         document.getElementById('recordBtn').addEventListener('click', () => {
             if (!isRecording) {
                 startRecording();
@@ -383,10 +611,9 @@
             }
         });
 
-        // 初始化
+        // Initialize
         checkStatus();
-        setInterval(checkStatus, 5000); // 每5秒检查一次状态
+        setInterval(checkStatus, 5000); // Check status every 5 seconds
     </script>
 </body>
 </html>
-
