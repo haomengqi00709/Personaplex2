@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+python-multipart
+torch
+transformers
+accelerate
+sentencepiece
+numpy
+scipy
+soundfile
+torchaudio
+librosa
+huggingface-hub
+safetensors
+pyyaml
+
