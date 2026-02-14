@@ -293,6 +293,14 @@
             </button>
         </div>
 
+        <div class="mode-toggle" style="margin-top: 10px;">
+            <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+                <input type="checkbox" id="keepHistoryCheckbox" style="width: 20px; height: 20px; cursor: pointer;">
+                <span>Keep Conversation History</span>
+            </label>
+            <button id="clearHistoryBtn" class="toggle-btn" style="margin-left: 10px; padding: 8px 15px; font-size: 0.9em;">Clear History</button>
+        </div>
+
         <div id="vadSettings" class="vad-settings" style="display: none;">
             <label>
                 Voice Threshold: <span id="thresholdValue">0.01</span>
@@ -476,7 +484,8 @@
 
                 mediaRecorder.onstop = async () => {
                     const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-                    await processAudio(audioBlob);
+                    const resetHistory = !keepHistory && !isVADMode; // 如果关闭历史且是手动模式，重置
+                    await processAudio(audioBlob, resetHistory);
                     
                     // Stop all audio tracks (only if not in VAD mode)
                     if (!isVADMode) {
@@ -515,7 +524,7 @@
         }
 
         // Process audio
-        async function processAudio(audioBlob) {
+        async function processAudio(audioBlob, resetHistory = false) {
             const loadingSpinner = document.getElementById('loadingSpinner');
             loadingSpinner.classList.add('active');
             
@@ -525,6 +534,7 @@
             try {
                 const formData = new FormData();
                 formData.append('audio', audioBlob, 'recording.webm');
+                formData.append('reset_history', resetHistory);
 
                 const response = await fetch(`${API_BASE}/process`, {
                     method: 'POST',
@@ -594,6 +604,45 @@
                 document.getElementById('manualMode').classList.remove('active');
                 document.getElementById('vadSettings').style.display = 'block';
                 initVAD();
+            }
+        });
+
+        // Keep history toggle
+        let keepHistory = false;
+        document.getElementById('keepHistoryCheckbox').addEventListener('change', async (e) => {
+            keepHistory = e.target.checked;
+            try {
+                const response = await fetch(`${API_BASE}/set_history`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ keep_history: keepHistory })
+                });
+                const data = await response.json();
+                if (data.success) {
+                    console.log('History setting updated:', data.message);
+                }
+            } catch (error) {
+                console.error('Failed to update history setting:', error);
+            }
+        });
+
+        // Clear history button
+        document.getElementById('clearHistoryBtn').addEventListener('click', async () => {
+            try {
+                const response = await fetch(`${API_BASE}/clear_history`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                if (data.success) {
+                    alert('Conversation history cleared!');
+                } else {
+                    alert(`Failed to clear history: ${data.message}`);
+                }
+            } catch (error) {
+                console.error('Failed to clear history:', error);
+                alert(`Failed to clear history: ${error.message}`);
             }
         });
 

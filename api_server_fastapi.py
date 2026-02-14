@@ -9,7 +9,7 @@ import torch
 import numpy as np
 import soundfile as sf
 import warnings
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 import tempfile
@@ -68,6 +68,7 @@ lm = None
 lm_gen = None
 text_tokenizer = None
 model_loaded = False
+keep_history = False  # 是否保留对话历史
 
 app = FastAPI(title="PersonaPlex API")
 
@@ -204,9 +205,9 @@ def load_model():
         print(f"[ERROR] {error_msg}")
         return False, error_msg
 
-def process_voice(audio_path):
+def process_voice(audio_path, reset_history=False):
     """处理语音并生成回复 - 使用官方方式"""
-    global mimi, other_mimi, lm_gen, text_tokenizer
+    global mimi, other_mimi, lm_gen, text_tokenizer, keep_history
     
     if not model_loaded or mimi is None or lm_gen is None:
         return None, None, "模型未加载"
@@ -217,10 +218,16 @@ def process_voice(audio_path):
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
         
-        # 1. 重置流式状态
-        mimi.reset_streaming()
-        other_mimi.reset_streaming()
-        lm_gen.reset_streaming()
+        # 1. 根据 keep_history 决定是否重置流式状态
+        if not keep_history or reset_history:
+            # 不保留历史或明确要求重置：重置所有状态
+            mimi.reset_streaming()
+            other_mimi.reset_streaming()
+            lm_gen.reset_streaming()
+            print("[INFO] 流式状态已重置（新对话）")
+        else:
+            # 保留历史：不重置，继续使用之前的 KV Cache
+            print("[INFO] 保留对话历史，继续使用之前的上下文")
         
         # 2. 读取音频（使用多种方法尝试）
         import librosa
@@ -416,8 +423,52 @@ async def update_prompt(request: dict):
         'message': message
     }
 
+@app.post("/api/set_history")
+async def set_history(request: dict):
+    """设置是否保留对话历史"""
+    global keep_history
+    keep_history = request.get('keep_history', False)
+    
+    if not keep_history:
+        # 如果关闭历史，重置所有状态
+        if model_loaded and mimi is not None:
+            mimi.reset_streaming()
+            other_mimi.reset_streaming()
+            lm_gen.reset_streaming()
+            print("[INFO] 已关闭历史保留，状态已重置")
+    
+    return {
+        'success': True,
+        'keep_history': keep_history,
+        'message': f"History {'enabled' if keep_history else 'disabled'}"
+    }
+
+@app.post("/api/clear_history")
+async def clear_history():
+    """清除对话历史（重置流式状态）"""
+    global mimi, other_mimi, lm_gen
+    
+    if not model_loaded or mimi is None:
+        return {
+            'success': False,
+            'message': 'Model not loaded'
+        }
+    
+    mimi.reset_streaming()
+    other_mimi.reset_streaming()
+    lm_gen.reset_streaming()
+    
+    print("[INFO] 对话历史已清除")
+    return {
+        'success': True,
+        'message': 'History cleared'
+    }
+
 @app.post("/api/process")
-async def process(audio: UploadFile = File(...)):
+async def process(
+    audio: UploadFile = File(...),
+    reset_history: str = Form("false")
+):
     """处理音频"""
     if not audio:
         raise HTTPException(status_code=400, detail="没有上传音频文件")
@@ -449,13 +500,16 @@ async def process(audio: UploadFile = File(...)):
     filename = audio.filename or f"audio{file_ext}"
     print(f"[INFO] 检测到音频格式: {file_ext}, 文件名: {filename}")
     
+    # 解析 reset_history 参数（FormData 传过来的是字符串）
+    reset_history_bool = reset_history.lower() == "true" if isinstance(reset_history, str) else bool(reset_history)
+    
     # 保存上传的音频到临时文件
     input_file = tempfile.NamedTemporaryFile(delete=False, suffix=file_ext)
     try:
         input_file.write(content)
         input_file.close()
         
-        output_path, ai_text, error = process_voice(input_file.name)
+        output_path, ai_text, error = process_voice(input_file.name, reset_history=reset_history_bool)
         
         if error:
             raise HTTPException(status_code=500, detail=error)
