@@ -341,9 +341,27 @@
                     
                     // 播放音频
                     const audioPlayer = document.getElementById('audioPlayer');
-                    audioPlayer.src = `${API_BASE}${data.audio_url}`;
+                    // 修复 URL：audio_url 已经包含 /api/audio/，不需要再加 API_BASE
+                    const audioUrl = data.audio_url.startsWith('http') 
+                        ? data.audio_url 
+                        : `${window.location.protocol}//${window.location.host}${data.audio_url}`;
+                    
+                    console.log('音频 URL:', audioUrl);
+                    audioPlayer.src = audioUrl;
                     audioPlayer.style.display = 'block';
-                    audioPlayer.play();
+                    
+                    // 添加错误处理
+                    audioPlayer.onerror = function(e) {
+                        console.error('音频加载失败:', e);
+                        document.getElementById('aiText').textContent += '\n❌ 音频加载失败';
+                    };
+                    
+                    audioPlayer.onloadeddata = function() {
+                        console.log('音频加载成功，开始播放');
+                        audioPlayer.play().catch(err => {
+                            console.error('播放失败:', err);
+                        });
+                    };
                 } else {
                     document.getElementById('aiText').textContent = `❌ 错误: ${data.error}`;
                 }

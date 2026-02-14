@@ -430,12 +430,18 @@ async def process(audio: UploadFile = File(...)):
         if error:
             raise HTTPException(status_code=500, detail=error)
         
+        if not output_path or not os.path.exists(output_path):
+            raise HTTPException(status_code=500, detail="音频文件生成失败")
+        
         # 返回音频文件路径和文本
+        filename = os.path.basename(output_path)
+        print(f"[INFO] 生成的音频文件: {output_path}, 文件名: {filename}")
+        
         return {
             'success': True,
-            'audio_url': f'/api/audio/{os.path.basename(output_path)}',
+            'audio_url': f'/api/audio/{filename}',
             'text': ai_text,
-            'filename': os.path.basename(output_path)
+            'filename': filename
         }
     finally:
         # 清理输入文件
@@ -449,9 +455,26 @@ async def get_audio(filename: str):
     temp_dir = tempfile.gettempdir()
     file_path = os.path.join(temp_dir, filename)
     
+    print(f"[INFO] 请求音频文件: {filename}, 路径: {file_path}, 存在: {os.path.exists(file_path)}")
+    
     if os.path.exists(file_path):
-        return FileResponse(file_path, media_type='audio/wav')
-    raise HTTPException(status_code=404, detail="文件不存在")
+        return FileResponse(
+            file_path, 
+            media_type='audio/wav',
+            filename=filename,
+            headers={"Content-Disposition": f"inline; filename={filename}"}
+        )
+    
+    # 如果临时目录找不到，尝试当前目录
+    current_dir_path = os.path.join(os.path.dirname(__file__), filename)
+    if os.path.exists(current_dir_path):
+        return FileResponse(
+            current_dir_path,
+            media_type='audio/wav',
+            filename=filename
+        )
+    
+    raise HTTPException(status_code=404, detail=f"文件不存在: {filename}")
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
