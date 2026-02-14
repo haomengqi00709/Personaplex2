@@ -279,6 +279,12 @@
 
         <div id="status" class="status loading">Loading model...</div>
 
+        <div class="panel" style="margin-bottom: 20px;">
+            <h3>System Prompt</h3>
+            <textarea id="systemPrompt" class="text-display" rows="3" style="min-height: 80px; font-family: inherit; resize: vertical;">You enjoy having a good conversation.</textarea>
+            <button id="updatePromptBtn" class="record-btn" style="margin-top: 10px; padding: 10px 20px; font-size: 1em; min-width: auto;" disabled>Update Prompt</button>
+        </div>
+
         <div class="mode-toggle">
             <button id="manualMode" class="toggle-btn active">Manual Mode</button>
             <button id="vadMode" class="toggle-btn">
@@ -610,6 +616,55 @@
                 stopRecording();
             }
         });
+
+        // Update system prompt
+        async function updateSystemPrompt() {
+            const prompt = document.getElementById('systemPrompt').value.trim();
+            if (!prompt) {
+                alert('Please enter a system prompt');
+                return;
+            }
+            
+            const btn = document.getElementById('updatePromptBtn');
+            btn.disabled = true;
+            btn.textContent = 'Updating...';
+            
+            try {
+                const response = await fetch(`${API_BASE}/update_prompt`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ prompt: prompt })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert('System prompt updated successfully!');
+                } else {
+                    alert(`Failed to update prompt: ${data.message}`);
+                }
+            } catch (error) {
+                console.error('Update prompt failed:', error);
+                alert(`Failed to update prompt: ${error.message}`);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Update Prompt';
+            }
+        }
+
+        document.getElementById('updatePromptBtn').addEventListener('click', updateSystemPrompt);
+        
+        // Enable update button when model is loaded
+        const originalCheckStatus = checkStatus;
+        checkStatus = async function() {
+            await originalCheckStatus();
+            const statusEl = document.getElementById('status');
+            if (statusEl.className === 'status ready') {
+                document.getElementById('updatePromptBtn').disabled = false;
+            }
+        };
 
         // Initialize
         checkStatus();

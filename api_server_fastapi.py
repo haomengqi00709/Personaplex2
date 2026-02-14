@@ -80,6 +80,33 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+def update_system_prompt(text_prompt: str):
+    """更新系统提示"""
+    global lm_gen, text_tokenizer, mimi
+    
+    if not model_loaded or lm_gen is None or text_tokenizer is None:
+        return False, "Model not loaded"
+    
+    try:
+        from moshi.offline import wrap_with_system_tags
+        lm_gen.text_prompt_tokens = (
+            text_tokenizer.encode(wrap_with_system_tags(text_prompt)) if len(text_prompt) > 0 else None
+        )
+        
+        # 重置流式状态并运行系统提示
+        mimi.reset_streaming()
+        other_mimi.reset_streaming()
+        lm_gen.reset_streaming()
+        lm_gen.step_system_prompts(mimi)
+        mimi.reset_streaming()
+        
+        print(f"[INFO] System prompt updated: {text_prompt}")
+        return True, "System prompt updated successfully"
+    except Exception as e:
+        error_msg = f"Failed to update system prompt: {str(e)}"
+        print(f"[ERROR] {error_msg}\n{traceback.format_exc()}")
+        return False, error_msg
+
 def load_model():
     """加载模型 - 使用官方方式"""
     global mimi, other_mimi, lm, lm_gen, text_tokenizer, model_loaded
@@ -165,17 +192,7 @@ def load_model():
         # 6. 初始化系统提示
         print("[INFO] 初始化系统提示...")
         text_prompt = "You enjoy having a good conversation."
-        from moshi.offline import wrap_with_system_tags
-        lm_gen.text_prompt_tokens = (
-            text_tokenizer.encode(wrap_with_system_tags(text_prompt)) if len(text_prompt) > 0 else None
-        )
-        
-        # 重置流式状态并运行系统提示
-        mimi.reset_streaming()
-        other_mimi.reset_streaming()
-        lm_gen.reset_streaming()
-        lm_gen.step_system_prompts(mimi)
-        mimi.reset_streaming()
+        update_system_prompt(text_prompt)
         
         model_loaded = True
         mem = torch.cuda.memory_allocated(0) / 1e9 if torch.cuda.is_available() else 0
@@ -381,6 +398,19 @@ async def status():
 async def load():
     """加载模型"""
     success, message = load_model()
+    return {
+        'success': success,
+        'message': message
+    }
+
+@app.post("/api/update_prompt")
+async def update_prompt(request: dict):
+    """更新系统提示"""
+    text_prompt = request.get('prompt', '')
+    if not text_prompt:
+        raise HTTPException(status_code=400, detail="Prompt cannot be empty")
+    
+    success, message = update_system_prompt(text_prompt)
     return {
         'success': success,
         'message': message
