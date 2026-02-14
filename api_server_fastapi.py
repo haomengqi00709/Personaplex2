@@ -205,17 +205,43 @@ def process_voice(audio_path):
         other_mimi.reset_streaming()
         lm_gen.reset_streaming()
         
-        # 2. 读取音频（使用 librosa，支持更多格式如 WebM, OGG 等）
+        # 2. 读取音频（使用多种方法尝试）
         import librosa
+        audio_data = None
+        sr = None
+        
+        # 方法1: 尝试使用 librosa（支持 WebM, OGG 等）
         try:
-            # 使用 librosa 读取，支持更多格式
             audio_data, sr = librosa.load(audio_path, sr=None, mono=True)
-        except Exception as e:
-            # 如果 librosa 失败，尝试 soundfile
-            print(f"[WARN] librosa 读取失败，尝试 soundfile: {e}")
-            audio_data, sr = sf.read(audio_path)
-            if len(audio_data.shape) > 1:
-                audio_data = np.mean(audio_data, axis=1)
+            print(f"[INFO] 使用 librosa 成功读取音频: {sr}Hz")
+        except Exception as e1:
+            print(f"[WARN] librosa 读取失败: {e1}")
+            
+            # 方法2: 尝试使用 soundfile
+            try:
+                audio_data, sr = sf.read(audio_path)
+                if len(audio_data.shape) > 1:
+                    audio_data = np.mean(audio_data, axis=1)
+                print(f"[INFO] 使用 soundfile 成功读取音频: {sr}Hz")
+            except Exception as e2:
+                print(f"[WARN] soundfile 读取失败: {e2}")
+                
+                # 方法3: 尝试使用 pydub（如果可用）
+                try:
+                    from pydub import AudioSegment
+                    audio = AudioSegment.from_file(audio_path)
+                    audio = audio.set_channels(1)  # 转为单声道
+                    audio = audio.set_frame_rate(24000)  # 转为 24kHz
+                    audio_data = np.array(audio.get_array_of_samples(), dtype=np.float32)
+                    audio_data = audio_data / (1 << 15)  # 归一化到 [-1, 1]
+                    sr = 24000
+                    print(f"[INFO] 使用 pydub 成功读取音频: {sr}Hz")
+                except Exception as e3:
+                    print(f"[WARN] pydub 读取失败: {e3}")
+                    raise Exception(f"无法读取音频文件。尝试了 librosa, soundfile, pydub 都失败。最后错误: {e3}")
+        
+        if audio_data is None or sr is None:
+            raise Exception("无法读取音频数据")
         
         # 3. 重采样到模型采样率 (24kHz)
         if sr != mimi.sample_rate:
@@ -366,21 +392,36 @@ async def process(audio: UploadFile = File(...)):
     if not audio:
         raise HTTPException(status_code=400, detail="没有上传音频文件")
     
-    # 根据上传文件的扩展名确定格式
-    filename = audio.filename or "audio"
-    file_ext = os.path.splitext(filename)[1].lower()
+    # 读取上传的音频内容
+    content = await audio.read()
     
-    # 支持的格式
-    if file_ext in ['.wav', '.webm', '.ogg', '.mp3', '.m4a', '.flac']:
-        suffix = file_ext
-    else:
-        # 默认使用 .webm（浏览器录音常用格式）
-        suffix = '.webm'
+    # 检测文件格式（通过 magic bytes）
+    def detect_format(data):
+        """通过文件头检测格式"""
+        if data.startswith(b'RIFF') and b'WAVE' in data[:12]:
+            return '.wav'
+        elif data.startswith(b'OggS'):
+            return '.ogg'
+        elif data.startswith(b'fLaC'):
+            return '.flac'
+        elif data.startswith(b'\xff\xfb') or data.startswith(b'\xff\xf3'):
+            return '.mp3'
+        elif data.startswith(b'\x00\x00\x00\x20ftyp') or data.startswith(b'\x00\x00\x00\x18ftyp'):
+            return '.m4a'
+        elif data.startswith(b'\x1a\x45\xdf\xa3'):  # WebM/Matroska
+            return '.webm'
+        else:
+            # 默认尝试 .webm（浏览器录音常用）
+            return '.webm'
     
-    # 保存上传的音频到临时文件（保留原始格式）
-    input_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    # 检测格式
+    file_ext = detect_format(content)
+    filename = audio.filename or f"audio{file_ext}"
+    print(f"[INFO] 检测到音频格式: {file_ext}, 文件名: {filename}")
+    
+    # 保存上传的音频到临时文件
+    input_file = tempfile.NamedTemporaryFile(delete=False, suffix=file_ext)
     try:
-        content = await audio.read()
         input_file.write(content)
         input_file.close()
         
